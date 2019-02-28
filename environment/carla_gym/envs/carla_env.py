@@ -11,6 +11,7 @@ from datetime import datetime
 import atexit
 import cv2
 import os
+import sys
 import random
 import signal
 import subprocess
@@ -22,10 +23,11 @@ import gym
 from gym.spaces import Box, Discrete, Tuple
 
 # Set this to the path to your Carla binary
-SERVER_BINARY = os.environ.get(
-    "CARLA_SERVER", os.path.expanduser("~/toolkits/CARLA/carla-0.8.2/CarlaUE4.sh"))
+SERVER_BINARY = os.environ.get("CARLA_SERVER", os.path.expanduser("~/toolkits/CARLA/carla-0.8.2/CarlaUE4.sh"))
 assert os.path.exists(SERVER_BINARY), "CARLA_SERVER environment variable is not set properly. Please check and retry"
 
+sys.path.append("/home/fc/projects/carla-DRL/utils/")
+from common import DEBUG_PRINT as DEBUG_PRINT
 
 # Import Carla python client API funcs
 try:
@@ -68,14 +70,14 @@ weathers = [scenario_config['Weather']['WetNoon'],
             scenario_config['Weather']['HardRainNoon'],
             scenario_config['Weather']['ClearSunset'],
             scenario_config['Weather']['CloudySunset']]
-scenario_config['Weather_distribution'] = weathers
+scenario_config['weather_distribution'] = weathers
 
 # Default environment configuration
 ENVIRONMENT_CONFIG = {
     "discrete_actions": True,
     "use_image_only_observations": True,  # Exclude high-level planner inputs & goal info from the observations
-    "server_map": "/Game/Maps/" + scenario_config["city"][1], # Town02
-    "scenarios": [scenario_config["Lane_Keep_Town1"],scenario_config["Lane_Keep_Town2"]],
+    "server_map": "/Game/Maps/" + scenario_config["city"][0], # Town02
+    "scenarios": scenario_config["Lane_Keep_Town1"], #[scenario_config["Lane_Keep_Town1"],scenario_config["Lane_Keep_Town2"]],
     "framestack": 2,  # note: only [1, 2] currently supported
     "enable_planner": True,
     "use_depth_camera": False,
@@ -92,8 +94,8 @@ ENVIRONMENT_CONFIG = {
 
 # Number of retries if the server doesn't respond
 RETRIES_ON_ERROR = 4
-# Dummy Z coordinate to use when we only care about (x, y)
-GROUND_Z = 22
+# # Dummy Z coordinate to use when we only care about (x, y)
+# GROUND_Z = 22
 
 # Define the discrete action space
 DISCRETE_ACTIONS = {
@@ -111,7 +113,7 @@ DISCRETE_ACTIONS = {
 
 live_carla_processes = set()  # To keep track of all the Carla processes we launch to make the cleanup easier
 def cleanup():
-    print("Killing live carla processes", live_carla_processes)
+    DEBUG_PRINT("Killing live carla processes", live_carla_processes)
     for pgid in live_carla_processes:
         os.killpg(pgid, signal.SIGKILL)
 atexit.register(cleanup)
@@ -175,19 +177,19 @@ class CarlaEnv(gym.Env):
 
     def init_server(self):
 
-        print("Initializing new Carla server...")
+        DEBUG_PRINT("Initializing new Carla server...")
         # Create a new server process and start the client.
-        self.server_port = random.randint(10000, 60000)
+        self.server_port = random.randint(10000,60000)
 
         if self.config["render"]:
             self.server_process = subprocess.Popen(
-                                                    [SERVER_BINARY,
-                                                     self.config["server_map"],
-                                                     "-windowed",
-                                                     "-ResX=" + self.config["render_x_res"],
-                                                     "-ResY=" + self.config["render_y_res"],
-                                                     "-carla-server",
-                                                     "-carla-world-port={}".format(self.server_port)],
+                                                    "{} {} -windowed -ResX={} -ResY={} -carla-server -carla-world-port={}".format(
+                                                            SERVER_BINARY,
+                                                            self.config["server_map"],
+                                                            self.config["render_x_res"],
+                                                            self.config["render_y_res"],
+                                                            self.server_port),
+                                                     shell=True,
                                                      preexec_fn=os.setsid,
                                                      stdout=open(os.devnull, "w"))
         else:
@@ -204,17 +206,17 @@ class CarlaEnv(gym.Env):
                 self.client = CarlaClient("localhost", self.server_port)
                 return self.client.connect()
             except Exception as e:
-                print("Error connecting: {}, attempt {}".format(e, i))
+                DEBUG_PRINT("Error connecting: {}, attempt {}".format(e, i))
                 time.sleep(2)
 
     def clear_server_state(self):
-        print("Clearing Carla server state")
+        DEBUG_PRINT("Clearing Carla server state")
         try:
             if self.client:
                 self.client.disconnect()
                 self.client = None
         except Exception as e:
-            print("Error disconnecting client: {}".format(e))
+            DEBUG_PRINT("Error disconnecting client: {}".format(e))
             pass
         if self.server_process:
             pgid = os.getpgid(self.server_process.pid)
@@ -234,7 +236,7 @@ class CarlaEnv(gym.Env):
                     self.init_server()
                 return self.reset_env()
             except Exception as e:
-                print("Error during reset: {}".format(traceback.format_exc()))
+                DEBUG_PRINT("Error during reset: {}".format(traceback.format_exc()))
                 self.clear_server_state()
                 error = e
         raise error
@@ -290,14 +292,14 @@ class CarlaEnv(gym.Env):
             self.start_pos.location.x // 100, self.start_pos.location.y // 100]
         self.end_coord = [
             self.end_pos.location.x // 100, self.end_pos.location.y // 100]
-        print( "Start pos {} ({}), end {} ({})".format(
+        DEBUG_PRINT( "Start pos {} ({}), end {} ({})".format(
                 self.scenario["start_pos_id"], self.start_coord,
                 self.scenario["end_pos_id"], self.end_coord))
 
         # Notify the server that we want to start the episode at the
         # player_start index. This function blocks until the server is ready
         # to start the episode.
-        print("Starting new episode...")
+        DEBUG_PRINT("Starting new episode...")
         self.client.start_episode(self.scenario["start_pos_id"])
         image, py_measurements = self._read_observation()
         self.prev_measurement = py_measurements
@@ -323,7 +325,7 @@ class CarlaEnv(gym.Env):
             obs = (
                 image,
                 COMMAND_ORDINAL[py_measurements["next_command"]],
-                [py_measurements["forward_speed"],
+                [py_measurements["agent_forward_speed"],
                  py_measurements["distance_to_goal"]])
         self.last_obs = obs
         return obs
@@ -333,7 +335,7 @@ class CarlaEnv(gym.Env):
             obs = self.step_env(action)
             return obs
         except Exception:
-            print("Error during step, terminating episode early", traceback.format_exc())
+            DEBUG_PRINT("Error during step, terminating episode early", traceback.format_exc())
             self.clear_server_state()
             return (self.last_obs, 0.0, True, {})
 
@@ -351,7 +353,7 @@ class CarlaEnv(gym.Env):
         hand_brake = False
 
         if self.config["verbose"]:
-            print("steer = ", steer, " throttle =", throttle, " brake = ", brake,
+            DEBUG_PRINT("steer = ", steer, " throttle =", throttle, " brake = ", brake,
                 " reverse = ", reverse)
 
         self.client.send_control( steer=steer, throttle=throttle, brake=brake,
@@ -361,7 +363,7 @@ class CarlaEnv(gym.Env):
         image, py_measurements = self._read_observation()
 
         if self.config["verbose"]:
-            print("Next command", py_measurements["next_command"])
+            DEBUG_PRINT("Next command", py_measurements["next_command"])
 
         if type(action) is np.ndarray:
             py_measurements["action"] = [float(a) for a in action]
@@ -390,7 +392,7 @@ class CarlaEnv(gym.Env):
         self.global_steps += 1
         image = self.preprocess_image(image)
 
-        return (self.encode_observation(image, py_measurements), reward, done,py_measurements)
+        return (self.encode_observation(image, py_measurements), reward, done, py_measurements)
 
 
     def preprocess_image(self, image):
@@ -441,7 +443,7 @@ class CarlaEnv(gym.Env):
         if next_command == "REACH_GOAL":
             distance_to_goal = 0.0  # avoids crash in planner
         elif self.config["enable_planner"]:
-            distance_to_goal = self.planner.get_shortest_path_distance(
+            distance_to_goal = self.config_planner.get_shortest_path_distance(
                 [current_measurement.transform.location.x, current_measurement.transform.location.y, current_measurement.transform.location.z],
                 [current_measurement.transform.orientation.x, current_measurement.transform.orientation.y, current_measurement.transform.orientation.z],
                 [self.end_pos.location.x, self.end_pos.location.y, self.end_pos.location.z],
@@ -455,7 +457,7 @@ class CarlaEnv(gym.Env):
 
         result = {
             "episode_id": self.episode_id,
-            "step": self.global_steps,
+            "global_step": self.global_steps,
             "agent_location_x": current_measurement.transform.location.x,
             "agent_location_y": current_measurement.transform.location.y,
             "agent_orientation_x": current_measurement.transform.orientation.x,
@@ -499,13 +501,13 @@ class CarlaEnv(gym.Env):
         prev_dist = self.prev_measurement["distance_to_goal"]
 
         if self.config["verbose"]:
-            print("Current distance to goal {}, Previous distance to goal {}".format(cur_dist, prev_dist))
+            DEBUG_PRINT("Current distance to goal {}, Previous distance to goal {}".format(cur_dist, prev_dist))
 
         # Distance travelled toward the goal in m
         reward += np.clip((prev_dist - cur_dist)/100, -10.0, 10.0)
 
         # Change in speed (km/hr)
-        reward += 0.05 * (current_measurement["forward_speed"] - self.prev_measurement["forward_speed"])
+        reward += 0.05 * (current_measurement["agent_forward_speed"] - self.prev_measurement["agent_forward_speed"])
 
         # New collision damage
         reward -= .00002 * (
@@ -542,7 +544,7 @@ def print_measurements(measurements):
         other_lane=100 * player_measurements.intersection_otherlane,
         offroad=100 * player_measurements.intersection_offroad,
         agents_num=number_of_agents)
-    print(message)
+    DEBUG_PRINT(message)
 
 # 检测任何collision发生或者total_reward < -100
 def check_collision(py_measurements):
@@ -552,18 +554,59 @@ def check_collision(py_measurements):
     return bool(collided or m["total_reward"] < -100)
 
 
-# if __name__ == "__main__":
-#     for _ in range(5):
-#         env = CarlaEnv()
-#         obs = env.reset()
-#         done = False
-#         t = 0
-#         total_reward = 0.0
-#         while not done:
-#             t += 1
-#             if ENV_CONFIG["discrete_actions"]:
-#                 obs, reward, done, info = env.step(3)  # Go Forward
-#             else:
-#                 obs, reward, done, info = env.step([1.0, 0.0])  # Full throttle, zero steering angle
-#             total_reward += reward
-#             print("step#:", t, "reward:", round(reward, 4), "total_reward:", round(total_reward, 4), "done:", done)
+
+import tensorflow as tf
+import tensorflow.contrib.layers as layers
+
+
+
+if __name__ == "__main__":
+
+    # session = tf.Session()
+
+
+
+    # def model(inpt, num_actions, scope, reuse=False):
+    #     """This model takes as input an observation and returns values of all actions.
+    #     Input: [2, 224,224,1] (NHWC)
+    #     """
+    #     with tf.variable_scope(scope, reuse=reuse):
+    #         out = inpt
+    #         out = layers.conv2d(inpt, 32, kernel_size=[11, 11], stride=4, padding='SAME',activation_fn=tf.nn.relu)  # normalizer_fn=tf.nn.batch_normalization)
+    #         DEBUG_PRINT(out.op.name, out.get_shape().as_list())
+    #         out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
+    #         DEBUG_PRINT(out.op.name, out.get_shape().as_list())
+    #         out = layers.conv2d(out, 64, kernel_size=[5, 5], stride=2, padding='SAME', activation_fn=tf.nn.relu)
+    #         DEBUG_PRINT(out.op.name, out.get_shape().as_list())
+    #         out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
+    #         DEBUG_PRINT(out.op.name, out.get_shape().as_list())
+    #         out = layers.conv2d(out, 192, kernel_size=[3, 3], stride=1, padding='SAME', activation_fn=tf.nn.relu)
+    #         DEBUG_PRINT(out.op.name, out.get_shape().as_list())
+    #         out = layers.fully_connected(out, num_outputs=64, activation_fn=tf.nn.relu)
+    #         DEBUG_PRINT(out.op.name, out.get_shape().as_list())
+    #         out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
+    #         return out
+
+    # image = tf.Variable(tf.zeros(shape=[2,224,224,3]),dtype=tf.float32)
+    # session.run(tf.global_variables_initializer())
+    for _ in range(5):
+        env = CarlaEnv()
+        obs = env.reset()
+        done = False
+        t = 0
+        total_reward = 0.0
+        DEBUG_PRINT("observation shape:",obs.shape)
+        # image[0].assign(obs[:3])
+        # image[1].assign(obs[3:5])
+        # model(image, env.action_space.n, scope='q_function')
+        while not done:
+            t += 1
+            if ENVIRONMENT_CONFIG["discrete_actions"]:
+                obs, reward, done, info = env.step(3)  # Go Forward
+            else:
+                obs, reward, done, info = env.step([1.0, 0.0])  # Full throttle, zero steering angle
+            total_reward += reward
+
+
+
+            DEBUG_PRINT("step#:", t, "reward:", round(reward, 4), "total_reward:", round(total_reward, 4), "done:", done)

@@ -26,7 +26,7 @@
     "end_pos_id": 40,
     "num_vehicles": 25,
     "num_pedestrians": 15,
-    "Weather_distribution": [1],
+    "weather_distribution": [1],
     "max_steps": 200
   },
 
