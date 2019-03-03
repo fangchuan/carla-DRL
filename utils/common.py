@@ -1,5 +1,8 @@
 # DEBUG_PRINT函数，去除print时只需要将const.DEBUG=0
-import const
+try:
+    import const
+except:
+    from . import const
 
 const.DEBUG = 1
 

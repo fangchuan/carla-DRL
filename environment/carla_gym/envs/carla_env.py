@@ -80,20 +80,20 @@ ENVIRONMENT_CONFIG = {
     "scenarios": scenario_config["Lane_Keep_Town1"], #[scenario_config["Lane_Keep_Town1"],scenario_config["Lane_Keep_Town2"]],
     "framestack": 2,  # note: only [1, 2] currently supported
     "enable_planner": True,
-    "use_depth_camera": False,
+    "use_depth_camera": True,
     "early_terminate_on_collision": True,
-    "verbose": False,
-    "render" : True,  # Render to display if true
+    "verbose": True,
+    "render" : False,  # Render to display if true
     "render_x_res": 800,
     "render_y_res": 600,
     "camera_position":(0.3, 0, 1.3),
-    "image_x_res": 224,
-    "image_y_res": 224,
+    "image_x_res": 84,
+    "image_y_res": 84,
     "seed": 1
 }
 
 # Number of retries if the server doesn't respond
-RETRIES_ON_ERROR = 4
+RETRIES_ON_ERROR = 10
 # # Dummy Z coordinate to use when we only care about (x, y)
 # GROUND_Z = 22
 
@@ -353,8 +353,7 @@ class CarlaEnv(gym.Env):
         hand_brake = False
 
         if self.config["verbose"]:
-            DEBUG_PRINT("steer = ", steer, " throttle =", throttle, " brake = ", brake,
-                " reverse = ", reverse)
+            DEBUG_PRINT("steer = ", steer, " throttle =", throttle, " brake = ", brake, " reverse = ", reverse)
 
         self.client.send_control( steer=steer, throttle=throttle, brake=brake,
                                     hand_brake=hand_brake, reverse=reverse)
@@ -393,7 +392,6 @@ class CarlaEnv(gym.Env):
         image = self.preprocess_image(image)
 
         return (self.encode_observation(image, py_measurements), reward, done, py_measurements)
-
 
     def preprocess_image(self, image):
         # 将image.data 范围[-1.0, 1.0]
@@ -500,8 +498,8 @@ class CarlaEnv(gym.Env):
 
         prev_dist = self.prev_measurement["distance_to_goal"]
 
-        if self.config["verbose"]:
-            DEBUG_PRINT("Current distance to goal {}, Previous distance to goal {}".format(cur_dist, prev_dist))
+        # if self.config["verbose"]:
+        #     DEBUG_PRINT("Current distance to goal {}, Previous distance to goal {}".format(cur_dist, prev_dist))
 
         # Distance travelled toward the goal in m
         reward += np.clip((prev_dist - cur_dist)/100, -10.0, 10.0)
@@ -523,20 +521,23 @@ class CarlaEnv(gym.Env):
         reward -= 2 * (
             current_measurement["intersection_otherlane"] - self.prev_measurement["intersection_otherlane"])
 
+        if self.config["verbose"]:
+            DEBUG_PRINT("Current total reward {}".format(self.total_reward))
+
         return reward
 
 def print_measurements(measurements):
     number_of_agents = len(measurements.non_player_agents)
     player_measurements = measurements.player_measurements
-    message = "Vehicle at ({pos_x:.1f}, {pos_y:.1f}), "
+    message = "Vehicle at ({pos_x:.2f}, {pos_y:.2f}), "
     message += "{speed:.2f} km/h, "
     message += "Collision: {{vehicles={col_cars:.0f}, "
     message += "pedestrians={col_ped:.0f}, other={col_other:.0f}}}, "
     message += "{other_lane:.0f}% other lane, {offroad:.0f}% off-road, "
     message += "({agents_num:d} non-player agents in the scene)"
     message = message.format(
-        pos_x=player_measurements.transform.location.x / 100,  # cm -> m
-        pos_y=player_measurements.transform.location.y / 100,
+        pos_x=player_measurements.transform.location.x,  # cm -> m
+        pos_y=player_measurements.transform.location.y,
         speed=player_measurements.forward_speed,
         col_cars=player_measurements.collision_vehicles,
         col_ped=player_measurements.collision_pedestrians,
@@ -560,53 +561,51 @@ import tensorflow.contrib.layers as layers
 
 
 
-if __name__ == "__main__":
-
-    # session = tf.Session()
-
-
-
-    # def model(inpt, num_actions, scope, reuse=False):
-    #     """This model takes as input an observation and returns values of all actions.
-    #     Input: [2, 224,224,1] (NHWC)
-    #     """
-    #     with tf.variable_scope(scope, reuse=reuse):
-    #         out = inpt
-    #         out = layers.conv2d(inpt, 32, kernel_size=[11, 11], stride=4, padding='SAME',activation_fn=tf.nn.relu)  # normalizer_fn=tf.nn.batch_normalization)
-    #         DEBUG_PRINT(out.op.name, out.get_shape().as_list())
-    #         out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
-    #         DEBUG_PRINT(out.op.name, out.get_shape().as_list())
-    #         out = layers.conv2d(out, 64, kernel_size=[5, 5], stride=2, padding='SAME', activation_fn=tf.nn.relu)
-    #         DEBUG_PRINT(out.op.name, out.get_shape().as_list())
-    #         out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
-    #         DEBUG_PRINT(out.op.name, out.get_shape().as_list())
-    #         out = layers.conv2d(out, 192, kernel_size=[3, 3], stride=1, padding='SAME', activation_fn=tf.nn.relu)
-    #         DEBUG_PRINT(out.op.name, out.get_shape().as_list())
-    #         out = layers.fully_connected(out, num_outputs=64, activation_fn=tf.nn.relu)
-    #         DEBUG_PRINT(out.op.name, out.get_shape().as_list())
-    #         out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
-    #         return out
-
-    # image = tf.Variable(tf.zeros(shape=[2,224,224,3]),dtype=tf.float32)
-    # session.run(tf.global_variables_initializer())
-    for _ in range(5):
-        env = CarlaEnv()
-        obs = env.reset()
-        done = False
-        t = 0
-        total_reward = 0.0
-        DEBUG_PRINT("observation shape:",obs.shape)
-        # image[0].assign(obs[:3])
-        # image[1].assign(obs[3:5])
-        # model(image, env.action_space.n, scope='q_function')
-        while not done:
-            t += 1
-            if ENVIRONMENT_CONFIG["discrete_actions"]:
-                obs, reward, done, info = env.step(3)  # Go Forward
-            else:
-                obs, reward, done, info = env.step([1.0, 0.0])  # Full throttle, zero steering angle
-            total_reward += reward
-
-
-
-            DEBUG_PRINT("step#:", t, "reward:", round(reward, 4), "total_reward:", round(total_reward, 4), "done:", done)
+# if __name__ == "__main__":
+#
+#     session = tf.Session()
+#
+#     def model(inpt, num_actions, scope, reuse=False):
+#         """This model takes as input an observation and returns values of all actions.
+#         Input: RGB:[2, 224,224,3] (NHWC)
+#                DEPTH:[2, 224,224,1] (NHWC)
+#         """
+#         with tf.variable_scope(scope, reuse=reuse):
+#             out = inpt
+#             out = layers.conv2d(inpt, 32, kernel_size=[11, 11], stride=4, padding='SAME',activation_fn=tf.nn.relu)  # normalizer_fn=tf.nn.batch_normalization)
+#             DEBUG_PRINT(out.op.name, out.get_shape().as_list())
+#             out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
+#             DEBUG_PRINT(out.op.name, out.get_shape().as_list())
+#             out = layers.conv2d(out, 64, kernel_size=[5, 5], stride=2, padding='SAME', activation_fn=tf.nn.relu)
+#             DEBUG_PRINT(out.op.name, out.get_shape().as_list())
+#             out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
+#             DEBUG_PRINT(out.op.name, out.get_shape().as_list())
+#             out = layers.conv2d(out, 192, kernel_size=[3, 3], stride=1, padding='SAME', activation_fn=tf.nn.relu)
+#             DEBUG_PRINT(out.op.name, out.get_shape().as_list())
+#             out = layers.fully_connected(out, num_outputs=64, activation_fn=tf.nn.relu)
+#             DEBUG_PRINT(out.op.name, out.get_shape().as_list())
+#             out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
+#             return out
+#
+#     image = tf.Variable(tf.zeros(shape=[2,224,224,3]),dtype=tf.float32)
+#     session.run(tf.global_variables_initializer())
+#     for _ in range(5):
+#         env = CarlaEnv()
+#         obs = env.reset()
+#         done = False
+#         t = 0
+#         total_reward = 0.0
+#         DEBUG_PRINT("observation shape:",obs.shape)
+#
+#         # model(image.assign(obs.reshape([2,224,224,3])), env.action_space.n, scope='q_function')
+#         while not done:
+#             t += 1
+#             if ENVIRONMENT_CONFIG["discrete_actions"]:
+#                 obs, reward, done, info = env.step(3)  # Go Forward
+#             else:
+#                 obs, reward, done, info = env.step([1.0, 0.0])  # Full throttle, zero steering angle
+#             total_reward += reward
+#
+#
+#
+#             DEBUG_PRINT("step#:", t, "reward:", round(reward, 4), "total_reward:", round(total_reward, 4), "done:", done)
