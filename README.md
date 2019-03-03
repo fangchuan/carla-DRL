@@ -4,7 +4,9 @@
 2019-02-27: 修订carla_env.py: 调整camera position; 删除GROUND_Z, 正确使用Planner;
             client.read_data()得到的image数据就是处理过的数据，但是save_to_disk()时有转换为RGB图像保存
 
-2019-02-28: 移植dqn代码--dqn_test.py
+2019-02-28: 添加DEBUG_PRINT()功能函数
+
+            移植dqn代码--dqn_test.py
             q_func网络 implementation_1: conv1(11x11x32,s=4,p=SAME)
                                         pool1(3x3,s=2,p=VALID)
                                         conv2(5x5x64,s=2,p=SAME)
@@ -19,4 +21,11 @@
                         q_function/Conv_1/Relu [2, 14, 14, 64]
                         q_function/MaxPool2D_1/MaxPool [2, 6, 6, 64]
                         q_function/Conv_2/Relu [2, 6, 6, 192]
-                        q_function/fully_connected/Relu [2, 6, 6, 64]
+
+2019-03-02: 测试224x224x2深度图送入网络，将会吃尽16g内存
+            将图片改为84x84x2深度图, 最终占用内存7.3g， 但是carlaUE4占用内存持续增大，暂时不知道为什么.此时训练到670episode, mean_100episode_reward=1
+
+
+
+2019-03-03: 为dqn_test.py添加load_variables,save_variables
+            calculate_reward计算不合理，应该重新寻找一种reward制定模式
