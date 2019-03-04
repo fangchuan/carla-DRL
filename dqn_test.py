@@ -1,3 +1,32 @@
+"""
+*********************************************************************************************************
+*
+*	模块名称 : dqn_test模块
+*	文件名称 : dqn_test.py
+*	版    本 : V1.0.0
+*   作    者 ：fc
+*   日    期 ：2019/03/03
+*	说    明 :
+*             test the agent based on dqn.
+*
+* \par Method List:
+*    1.    q_function(inpt, num_actions, scope, reuse=False);
+*    2.    save_variables(save_path, variables=None, sess=None);
+*    3.    load_variables(load_path, variables=None, sess=None);
+*
+*
+*   修订记录：
+	2019-03-03：   1.0.0      build;
+							  position_tasks设定为straight_poses_Town01
+							  修改calculate_reward(), 按REWARD_ASSIGN_PARAMETERS中的超参数来计算reward,
+							  将forward_speed按speed_limit归一化为[0,100]范围, forward_speed-->forward_speed_post_process
+							  把超速情况考虑进calculate_reward()内, 但是没有考虑速度一直为0的情况
+
+
+*	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
+*
+*********************************************************************************************************
+"""
 import gym
 import itertools
 import numpy as np
@@ -32,11 +61,17 @@ CHECK_POINT_FREQUENCY = 20
 # q_function/MaxPool2D_1/MaxPool [2, 6, 6, 64]
 # q_function/Conv_2/Relu [2, 6, 6, 192]
 #
-
 def q_function(inpt, num_actions, scope, reuse=False):
-    """This model takes as input an observation and returns values of all actions.
-    Input: [None, 224,224,2] (NHWC)
     """
+     q_function模型
+      This model takes as input an observation and returns values of all actions
+     :param inpt: [batch, height, width, channel] (NHWC)
+     :param num_actions: the number of actions in the action space
+     :param scope: name scope or variable scop
+     :param reuse : True or False or tf.AUTO_REUSE
+     :return: the probability of each action
+     """
+
     with tf.variable_scope(scope, reuse=reuse):
         out = inpt
         out = layers.conv2d(inpt, 32, kernel_size=[11,11], stride=4, padding='SAME', activation_fn=tf.nn.relu) #normalizer_fn=tf.nn.batch_normalization)
@@ -50,6 +85,14 @@ def q_function(inpt, num_actions, scope, reuse=False):
         return out
 
 def save_variables(save_path, variables=None, sess=None):
+    """
+     保存模型参数
+
+     :param save_path: the path to the model file
+     :param variables: the trainable variables in the graph
+     :param sess: the session of the graph
+     :return: None
+     """
     sess = sess or tf.get_default_session()
     variables = variables or tf.trainable_variables()
 
@@ -61,6 +104,14 @@ def save_variables(save_path, variables=None, sess=None):
     joblib.dump(save_dict, save_path)
 
 def load_variables(load_path, variables=None, sess=None):
+    """
+     加载模型参数
+
+     :param load_path: the path to the model file
+     :param variables: the trainable variables in the graph
+     :param sess: the session of the graph
+     :return: None
+     """
     sess = sess or tf.get_default_session()
     variables = variables or tf.trainable_variables()
 
