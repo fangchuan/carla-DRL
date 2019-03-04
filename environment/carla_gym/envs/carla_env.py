@@ -1,7 +1,44 @@
 """
-OpenAI Gym compatible Driving simulation environment based on Carla.
-Requires the system environment variable CARLA_SERVER to be defined and be pointing to the
-CarlaUE4.sh file on your system. The default path is assumed to be at: ~/software/CARLA_0.8.2/CarlaUE4.sh
+*********************************************************************************************************
+*
+*	模块名称 : carla 环境适配模块
+*	文件名称 : carla_env.py
+*	版    本 : V1.0.0
+*   作    者 ：fc
+*   日    期 ：2019/03/03
+*	说    明 : OpenAI Gym compatible Driving simulation environment based on Carla.
+              Requires the system environment variable CARLA_SERVER to be defined and be pointing to the
+              CarlaUE4.sh file on your system. The default path is assumed to be at: ~/software/CARLA_0.8.2/CarlaUE4.sh.
+*
+* \par Method List:
+*    1.    cleanup();
+*    2.    print_measurements(measurements);
+*    3.    check_collision(py_measurements);
+*
+* \par Instance Method List:
+*   class CarlaEnv
+*    1.    init_server();
+*    2.    clear_server_state();
+*    3.    reset();
+*    4.    reset_env();
+*    5.    encode_observation(image, py_measurements);
+*    6.    step(action);
+*    7.    step_env(action);
+*    8.    preprocess_image(image);
+*    9.    _read_observation();
+*    10.   calculate_reward(current_measurement);
+*
+*   修订记录：
+	2019-03-04：   1.0.0      build;
+							  position_tasks设定为straight_poses_Town01
+							  修改calculate_reward(), 按REWARD_ASSIGN_PARAMETERS中的超参数来计算reward,
+							  将forward_speed按speed_limit归一化为[0,100]范围, forward_speed-->forward_speed_post_process
+							  把超速情况考虑进calculate_reward()内, 但是没有考虑速度一直为0的情况
+
+
+*	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
+*
+*********************************************************************************************************
 """
 from __future__ import absolute_import
 from __future__ import division
@@ -94,9 +131,8 @@ ENVIRONMENT_CONFIG = {
 
 # Number of retries if the server doesn't respond
 RETRIES_ON_ERROR = 10
-# # Dummy Z coordinate to use when we only care about (x, y)
-# GROUND_Z = 22
-
+# max speed km/h
+MAX_SPEED_LIMIT = 30
 # Define the discrete action space
 DISCRETE_ACTIONS = {
     #  brake/throttle, steer
@@ -111,13 +147,65 @@ DISCRETE_ACTIONS = {
     8: [-0.5, 0.5],   # Bear Right & decelerate
 }
 
+# define the parameters used to assign the hyperparameters of several factors
+# related to calculate the reward
+REWARD_ASSIGN_PARAMETERS = {
+    "location_coefficient": 0.75,
+    "speed_coefficient": 0.15,
+    "collision_coefficient": -1.0,
+    "offroad_coefficient": -0.5,
+    "otherland_coefficient":-0.5
+}
+
 live_carla_processes = set()  # To keep track of all the Carla processes we launch to make the cleanup easier
 def cleanup():
+    """
+    注册程序退出时的回调函数，在这个回调函数中做一些资源清理的操作
+    如果程序是非正常crash，或者通过os._exit()退出，注册的回调函数将不会被调用
+     """
     DEBUG_PRINT("Killing live carla processes", live_carla_processes)
     for pgid in live_carla_processes:
         os.killpg(pgid, signal.SIGKILL)
 atexit.register(cleanup)
 
+def print_measurements(measurements):
+    """
+     打印从Carla中获取的measurements
+
+     :param measurements: the raw measurements data retrieve from read_data()
+     :return: None
+     """
+    number_of_agents = len(measurements.non_player_agents)
+    player_measurements = measurements.player_measurements
+    message = "Vehicle at ({pos_x:.2f}, {pos_y:.2f}), "
+    message += "{speed:.2f} km/h, "
+    message += "Collision: {{vehicles={col_cars:.0f}, "
+    message += "pedestrians={col_ped:.0f}, other={col_other:.0f}}}, "
+    message += "{other_lane:.0f}% other lane, {offroad:.0f}% off-road, "
+    message += "({agents_num:d} non-player agents in the scene)"
+    message = message.format(
+        pos_x=player_measurements.transform.location.x,  # cm -> m
+        pos_y=player_measurements.transform.location.y,
+        speed=player_measurements.forward_speed,
+        col_cars=player_measurements.collision_vehicles,
+        col_ped=player_measurements.collision_pedestrians,
+        col_other=player_measurements.collision_other,
+        other_lane=100 * player_measurements.intersection_otherlane,
+        offroad=100 * player_measurements.intersection_offroad,
+        agents_num=number_of_agents)
+    DEBUG_PRINT(message)
+
+def check_collision(py_measurements):
+    """
+     检测任何collision发生或者total_reward < -100
+
+     :param py_measurements: the player measurements data
+     :return: bool
+     """
+    m = py_measurements
+    collided = (
+        m["collision_vehicles"] > 0 or m["collision_pedestrians"] > 0 or m["collision_other"] > 0)
+    return bool(collided or m["total_reward"] < -100)
 
 class CarlaEnv(gym.Env):
     def __init__(self, config=ENVIRONMENT_CONFIG):
@@ -286,15 +374,17 @@ class CarlaEnv(gym.Env):
         scene = self.client.load_settings(settings)
         positions = scene.player_start_spots
         # 读取配置文件中的start_pos, end_pos
+        straight_poses_tasks_len = len(scenario_config["Straight_Poses_Town01"])
+        random_position_task = scenario_config["Straight_Poses_Town01"][np.random.randint(straight_poses_tasks_len)]
+        self.scenario["start_pos_id"] = random_position_task[0]
+        self.scenario["end_pos_id"] = random_position_task[1]
         self.start_pos = positions[self.scenario["start_pos_id"]]
         self.end_pos = positions[self.scenario["end_pos_id"]]
-        self.start_coord = [
-            self.start_pos.location.x // 100, self.start_pos.location.y // 100]
-        self.end_coord = [
-            self.end_pos.location.x // 100, self.end_pos.location.y // 100]
+        self.start_coord = [self.start_pos.location.x, self.start_pos.location.y]
+        self.end_coord = [self.end_pos.location.x, self.end_pos.location.y]
         DEBUG_PRINT( "Start pos {} ({}), end {} ({})".format(
-                self.scenario["start_pos_id"], self.start_coord,
-                self.scenario["end_pos_id"], self.end_coord))
+                    self.scenario["start_pos_id"], self.start_coord,
+                    self.scenario["end_pos_id"], self.end_coord))
 
         # Notify the server that we want to start the episode at the
         # player_start index. This function blocks until the server is ready
@@ -325,7 +415,7 @@ class CarlaEnv(gym.Env):
             obs = (
                 image,
                 COMMAND_ORDINAL[py_measurements["next_command"]],
-                [py_measurements["agent_forward_speed"],
+                [py_measurements["agent_forward_speed_post_process"],
                  py_measurements["distance_to_goal"]])
         self.last_obs = obs
         return obs
@@ -378,6 +468,10 @@ class CarlaEnv(gym.Env):
         reward = self.calculate_reward(py_measurements)
         
         self.total_reward += reward
+
+        if self.config["verbose"]:
+            DEBUG_PRINT("Current total reward {:+.2f}".format(self.total_reward))
+
         py_measurements["reward"] = reward
         py_measurements["total_reward"] = self.total_reward
         
@@ -460,7 +554,7 @@ class CarlaEnv(gym.Env):
             "agent_location_y": current_measurement.transform.location.y,
             "agent_orientation_x": current_measurement.transform.orientation.x,
             "agent_orientation_y": current_measurement.transform.orientation.y,
-            "agent_forward_speed": current_measurement.forward_speed,
+            "agent_forward_speed_post_process": (current_measurement.forward_speed / MAX_SPEED_LIMIT)*100,
             "distance_to_goal": distance_to_goal,
             "distance_to_goal_euclidean": distance_to_goal_euclidean,
             "collision_vehicles": current_measurement.collision_vehicles,
@@ -479,6 +573,7 @@ class CarlaEnv(gym.Env):
             "num_pedestrians": self.scenario["num_pedestrians"],
             "max_steps": self.scenario["max_steps"],
             "next_command": next_command,
+            "is_overspeed": (current_measurement.forward_speed > MAX_SPEED_LIMIT)
         }
 
 
@@ -502,64 +597,38 @@ class CarlaEnv(gym.Env):
         #     DEBUG_PRINT("Current distance to goal {}, Previous distance to goal {}".format(cur_dist, prev_dist))
 
         # Distance travelled toward the goal in m
-        reward += np.clip((prev_dist - cur_dist)/100, -10.0, 10.0)
+        # constarined into [-100, +100]
+        reward += REWARD_ASSIGN_PARAMETERS["location_coefficient"] * np.clip((prev_dist - cur_dist), -100.0, 100.0)
 
         # Change in speed (km/hr)
-        reward += 0.05 * (current_measurement["agent_forward_speed"] - self.prev_measurement["agent_forward_speed"])
+        # limit speed less than 30km/h
+        # 如果超速了，则把reward换做负号
+        if current_measurement["is_overspeed"]:
+            reward -= REWARD_ASSIGN_PARAMETERS["speed_coefficient"] * (
+                    current_measurement["agent_forward_speed_post_process"] - self.prev_measurement["agent_forward_speed_post_process"])
+        else:
+            reward += REWARD_ASSIGN_PARAMETERS["speed_coefficient"] * (
+                    current_measurement["agent_forward_speed_post_process"] - self.prev_measurement["agent_forward_speed_post_process"])
+
 
         # New collision damage
-        reward -= .00002 * (
-            current_measurement["collision_vehicles"] + current_measurement["collision_pedestrians"] +
-            current_measurement["collision_other"] - self.prev_measurement["collision_vehicles"] -
-            self.prev_measurement["collision_pedestrians"] - self.prev_measurement["collision_other"])
+        reward += REWARD_ASSIGN_PARAMETERS["collision_coefficient"] * (
+            current_measurement["collision_vehicles"] + current_measurement["collision_pedestrians"] + current_measurement["collision_other"]
+           - self.prev_measurement["collision_vehicles"]-self.prev_measurement["collision_pedestrians"]-self.prev_measurement["collision_other"])
 
         # New sidewalk intersection
-        reward -= 2 * (
+        reward += REWARD_ASSIGN_PARAMETERS["offroad_coefficient"] * (
             current_measurement["intersection_offroad"] - self.prev_measurement["intersection_offroad"])
 
         # New opposite lane intersection
-        reward -= 2 * (
+        reward += REWARD_ASSIGN_PARAMETERS["otherland_coefficient"] * (
             current_measurement["intersection_otherlane"] - self.prev_measurement["intersection_otherlane"])
 
-        if self.config["verbose"]:
-            DEBUG_PRINT("Current total reward {}".format(self.total_reward))
-
         return reward
-
-def print_measurements(measurements):
-    number_of_agents = len(measurements.non_player_agents)
-    player_measurements = measurements.player_measurements
-    message = "Vehicle at ({pos_x:.2f}, {pos_y:.2f}), "
-    message += "{speed:.2f} km/h, "
-    message += "Collision: {{vehicles={col_cars:.0f}, "
-    message += "pedestrians={col_ped:.0f}, other={col_other:.0f}}}, "
-    message += "{other_lane:.0f}% other lane, {offroad:.0f}% off-road, "
-    message += "({agents_num:d} non-player agents in the scene)"
-    message = message.format(
-        pos_x=player_measurements.transform.location.x,  # cm -> m
-        pos_y=player_measurements.transform.location.y,
-        speed=player_measurements.forward_speed,
-        col_cars=player_measurements.collision_vehicles,
-        col_ped=player_measurements.collision_pedestrians,
-        col_other=player_measurements.collision_other,
-        other_lane=100 * player_measurements.intersection_otherlane,
-        offroad=100 * player_measurements.intersection_offroad,
-        agents_num=number_of_agents)
-    DEBUG_PRINT(message)
-
-# 检测任何collision发生或者total_reward < -100
-def check_collision(py_measurements):
-    m = py_measurements
-    collided = (
-        m["collision_vehicles"] > 0 or m["collision_pedestrians"] > 0 or m["collision_other"] > 0)
-    return bool(collided or m["total_reward"] < -100)
-
 
 
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
-
-
 
 # if __name__ == "__main__":
 #
