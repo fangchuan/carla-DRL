@@ -442,8 +442,8 @@ class CarlaEnv(gym.Env):
         reverse = False
         hand_brake = False
 
-        if self.config["verbose"]:
-            DEBUG_PRINT("steer = ", steer, " throttle =", throttle, " brake = ", brake, " reverse = ", reverse)
+        # if self.config["verbose"]:
+        #     DEBUG_PRINT("steer = ", steer, " throttle =", throttle, " brake = ", brake, " reverse = ", reverse)
 
         self.client.send_control( steer=steer, throttle=throttle, brake=brake,
                                     hand_brake=hand_brake, reverse=reverse)
@@ -451,8 +451,8 @@ class CarlaEnv(gym.Env):
         # Process observations
         image, py_measurements = self._read_observation()
 
-        if self.config["verbose"]:
-            DEBUG_PRINT("Next command", py_measurements["next_command"])
+        # if self.config["verbose"]:
+        #     DEBUG_PRINT("Next command", py_measurements["next_command"])
 
         if type(action) is np.ndarray:
             py_measurements["action"] = [float(a) for a in action]
