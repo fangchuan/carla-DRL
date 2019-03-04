@@ -29,3 +29,7 @@
 
 2019-03-03: 为dqn_test.py添加load_variables,save_variables
             calculate_reward计算不合理，应该重新寻找一种reward制定模式
+
+2019-03-04: 修改reset_env(), 每次[start_position, end_position]都随机选择Straight_poses_task中的元素
+            修改calculate_reward()函数
+            为每个文件添加函数说明
