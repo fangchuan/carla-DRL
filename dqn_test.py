@@ -22,7 +22,8 @@
 							  将forward_speed按speed_limit归一化为[0,100]范围, forward_speed-->forward_speed_post_process
 							  把超速情况考虑进calculate_reward()内, 但是没有考虑速度一直为0的情况
 
-
+    2019-03-05:   1.0.0       使用logger文件，plot csv文件观察训练过程
+                              想使用MPI, 发现baselines中除了dqn和trpo_mpi，其他算法训练过程均使用了mpi来vectorize environnment.
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
 *********************************************************************************************************
@@ -44,9 +45,10 @@ from baselines.common.schedules import LinearSchedule
 from environment import carla_gym
 from utils.common import DEBUG_PRINT as DEBUG_PRINT
 
-from argparse import ArgumentParser
 import os
 import joblib
+from argparse import ArgumentParser
+from mpi4py import MPI
 
 MAX_STEPS = 1e6
 MAX_ACCUMULATED_REWARDS = 20.0
@@ -133,10 +135,11 @@ if __name__ == '__main__':
 
     argparser = ArgumentParser("dqn_agent")
     argparser.add_argument(
-        '-v', '--verbose',
-        action='store_true',
-        dest='debug',
-        help='print debug information')
+        '--num_timesteps',
+        type=int, 
+        default=1000000,
+        dest='total_steps_num',
+        help='the total steps for training')
     argparser.add_argument(
         '--params-file',
         metavar='params-file',
@@ -165,6 +168,13 @@ if __name__ == '__main__':
         help='GPU device ID to use. Default:0')
 
     args = argparser.parse_args()
+
+    if MPI is None or MPI.COMM_WORLD.Get_rank() == 0:
+        mpi_rank = 0
+        logger.configure()
+    else:
+        logger.configure(format_strs=[])
+        mpi_rank = MPI.COMM_WORLD.Get_rank()
 
     with Util.make_session(num_cpu=8):
 
@@ -205,7 +215,7 @@ if __name__ == '__main__':
             load_variables(args.load_path)
             logger.log('Loaded model from {}'.format(args.load_path))
 
-        for step in itertools.count():
+        for step in range(args.total_steps_num):
             # Take action and update exploration to the newest value
             action = act(obs[None], update_eps=exploration.value(step))[0]
             new_obs, rew, done, _ = env.step(action)
@@ -235,11 +245,11 @@ if __name__ == '__main__':
             if done and len(episode_rewards) % check_point_freq == 0:
                 logger.record_tabular("steps", step)
                 logger.record_tabular("episodes", len(episode_rewards))
-                logger.record_tabular("mean episode reward", mean_100ep_reward)
-                logger.record_tabular("% time spent exploring", int(100 * exploration.value(step)))
+                logger.record_tabular("mean_100ep_reward", mean_100ep_reward)
+                logger.record_tabular("% time_exploring", int(100 * exploration.value(step)))
                 logger.dump_tabular()
 
-                if saved_mean_reward is None or mean_100ep_reward > saved_mean_reward:
+                if (saved_mean_reward is None or mean_100ep_reward > saved_mean_reward) and (mpi_rank == 0):
                     logger.log("Saving model due to mean reward increase: {} -> {}".format(saved_mean_reward, mean_100ep_reward))
                     save_variables(model_file)
                     saved_mean_reward = mean_100ep_reward

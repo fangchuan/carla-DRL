@@ -35,7 +35,9 @@
 							  将forward_speed按speed_limit归一化为[0,100]范围, forward_speed-->forward_speed_post_process
 							  把超速情况考虑进calculate_reward()内, 但是没有考虑速度一直为0的情况
 
-
+    2019-03-05:   1.0.0       解决Carla.sh一直吃内存问题
+                              calculate_reward()仍然不合理，目前参数训练16W步，mean_100ep_reward在[25,29](最高奖励100)
+                              
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
 *********************************************************************************************************
@@ -119,7 +121,7 @@ ENVIRONMENT_CONFIG = {
     "enable_planner": True,
     "use_depth_camera": True,
     "early_terminate_on_collision": True,
-    "verbose": True,
+    "verbose": False,
     "render" : False,  # Render to display if true
     "render_x_res": 800,
     "render_y_res": 600,
@@ -152,9 +154,9 @@ DISCRETE_ACTIONS = {
 REWARD_ASSIGN_PARAMETERS = {
     "location_coefficient": 0.75,
     "speed_coefficient": 0.15,
-    "collision_coefficient": -1.0,
-    "offroad_coefficient": -0.5,
-    "otherland_coefficient":-0.5
+    "collision_coefficient": -0.00006,
+    "offroad_coefficient": -6.0,
+    "otherland_coefficient":-6.0
 }
 
 live_carla_processes = set()  # To keep track of all the Carla processes we launch to make the cleanup easier
@@ -318,6 +320,7 @@ class CarlaEnv(gym.Env):
 
     def reset(self):
         error = None
+        self.clear_server_state()
         for _ in range(RETRIES_ON_ERROR):
             try:
                 if not self.server_process:

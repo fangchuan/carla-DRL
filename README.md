@@ -33,3 +33,8 @@
 2019-03-04: 修改reset_env(), 每次[start_position, end_position]都随机选择Straight_poses_task中的元素
             修改calculate_reward()函数
             为每个文件添加函数说明
+
+2019-03-05: 使用logger文件，plot csv文件观察训练过程
+            想使用MPI, 发现baselines中除了dqn和trpo_mpi，其他算法训练过程均使用了mpi来vectorize environnment.
+            解决Carla.sh一直吃内存问题
+            calculate_reward()仍然不合理，目前参数训练16W步，mean_100ep_reward在[25,29](最高奖励100)
