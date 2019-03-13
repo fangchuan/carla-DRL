@@ -38,3 +38,15 @@
             想使用MPI, 发现baselines中除了dqn和trpo_mpi，其他算法训练过程均使用了mpi来vectorize environnment.
             解决Carla.sh一直吃内存问题
             calculate_reward()仍然不合理，目前参数训练16W步，mean_100ep_reward在[25,29](最高奖励100)
+
+2019-03-06: calculate_reward方法好像不适用, 学习50W步后mean_100ep_reward=8., 出现啥问题了？
+            用回原始calculate_reward方法, 把epsilon exploration step设为100000, 使用grad_norm_clip和param_noise, fc1设为512units,agent学到了不理想的行为, 10W步后仍在右转;
+            
+2019-03-10: DQN在单个直线任务场景中表现很好, 但是随机选择直线任务的方式来训练时，一直不能收敛， 可能是number_total_steps不够.
+            尝试使用parameter_noise, 发现有问题, agent老是停在原地不动作, 需要调节参数;
+
+2019-03-11: 还是最初的reward等式效果更好一点, 至少mean_100ep_reward能反映agent的回报趋势
+
+2019-03-13: 将image存储格式改为np.uint8, 使用depth_image, replay_buffer为50000, dqn_test测试总共占用内存3.2G
+            修改action_space为Box(shape=(4,));
+            ddpg critic网络中, 将action_state与observation经过神经网络(最后一层为fc)后的vector拼接在一起;

@@ -37,6 +37,12 @@
 
     2019-03-05:   1.0.0       解决Carla.sh一直吃内存问题
                               calculate_reward()仍然不合理，目前参数训练16W步，mean_100ep_reward在[25,29](最高奖励100)
+
+    2019-03-11:   1.0.0       修改action_space为连续空间, discrete_actions=False;
+                              注释preprocess_image()中对image做normalization的代码;
+
+    2019-03-12:   1.0.0       修改action_space为4维;
+                              framestack 改为4，采用deque存储, image格式改为np.uint8;
                               
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
@@ -45,7 +51,7 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-
+from collections import deque
 from datetime import datetime
 import atexit
 import cv2
@@ -60,6 +66,8 @@ import json
 import numpy as np
 import gym
 from gym.spaces import Box, Discrete, Tuple
+import tensorflow as tf
+from baselines.common.mpi_running_mean_std import RunningMeanStd
 
 # Set this to the path to your Carla binary
 SERVER_BINARY = os.environ.get("CARLA_SERVER", os.path.expanduser("~/toolkits/CARLA/carla-0.8.2/CarlaUE4.sh"))
@@ -113,16 +121,18 @@ scenario_config['weather_distribution'] = weathers
 
 # Default environment configuration
 ENVIRONMENT_CONFIG = {
-    "discrete_actions": True,
+    "discrete_actions": False,
+    "use_gray_or_depth_image":True,
     "use_image_only_observations": True,  # Exclude high-level planner inputs & goal info from the observations
     "server_map": "/Game/Maps/" + scenario_config["city"][0], # Town02
     "scenarios": scenario_config["Lane_Keep_Town1"], #[scenario_config["Lane_Keep_Town1"],scenario_config["Lane_Keep_Town2"]],
-    "framestack": 2,  # note: only [1, 2] currently supported
+    "use_random_position_points": False,
+    "framestack": 4,  # note: only [1, 2, 3,4] currently supported
     "enable_planner": True,
     "use_depth_camera": True,
     "early_terminate_on_collision": True,
     "verbose": False,
-    "render" : False,  # Render to display if true
+    "render" : True,  # Render to display if true
     "render_x_res": 800,
     "render_y_res": 600,
     "camera_position":(0.3, 0, 1.3),
@@ -136,27 +146,35 @@ RETRIES_ON_ERROR = 10
 # max speed km/h
 MAX_SPEED_LIMIT = 30
 # Define the discrete action space
+ACTION_DIMENSIONS = 4
 DISCRETE_ACTIONS = {
-    #  brake/throttle, steer
-    0: [0.0, 0.0],    # Coast
-    1: [0.0, -0.5],   # Turn Left
-    2: [0.0, 0.5],    # Turn Right
-    3: [1.0, 0.0],    # Forward
-    4: [-0.5, 0.0],   # Brake
-    5: [1.0, -0.5],   # Bear Left & accelerate
-    6: [1.0, 0.5],    # Bear Right & accelerate
-    7: [-0.5, -0.5],  # Bear Left & decelerate
-    8: [-0.5, 0.5],   # Bear Right & decelerate
+    #  throttle brake steer reverse
+    0: [0.0, 0.0, 0.0, 0.0],    # Coast
+    1: [0.0, 0.0, -0.5, 0.0],   # Turn Left
+    2: [0.0, 0.0, 0.5, 0.0],    # Turn Right
+    3: [1.0, 0.0, 0.0, 0.0],    # Forward
+    4: [0.0, 0.5,0.0, 0.0],   # Brake
+    5: [1.0, 0.0, -0.5, 0.0],   # Bear Left & accelerate
+    6: [1.0, 0.0, 0.5, 0.0],    # Bear Right & accelerate
+    7: [0.0, 0.5,-0.5, 0.0],  # Bear Left & decelerate
+    8: [0.0, 0.5, 0.5, 0.0],   # Bear Right & decelerate
+    # 9: [0.0, 0.0, -0.5, 1.0],  # Turn back Left
+    # 10: [0.0, 0.0, 0.5, 1.0],  # Turn back Right
+    # 11: [1.0, 0.0, 0.0, 1.0],  # Backward
+    # 12: [1.0, 0.0, -0.5, 1.0],  # Bear back Left & accelerate
+    # 13: [1.0, 0.0, 0.5, 1.0],  # Bear back Right & accelerate
+    # 14: [0.0, 0.5, -0.5, 1.0],  # Bear back Left & decelerate
+    # 15: [0.0, 0.5, 0.5, 1.0],  # Bear back Right & decelerate
 }
 
 # define the parameters used to assign the hyperparameters of several factors
 # related to calculate the reward
 REWARD_ASSIGN_PARAMETERS = {
-    "location_coefficient": 0.75,
-    "speed_coefficient": 0.15,
-    "collision_coefficient": -0.00006,
-    "offroad_coefficient": -6.0,
-    "otherland_coefficient":-6.0
+    "location_coefficient": 1.0,
+    "speed_coefficient": 0.05,
+    "collision_coefficient": -0.00002,
+    "offroad_coefficient": -2.0,
+    "otherland_coefficient":-2.0
 }
 
 live_carla_processes = set()  # To keep track of all the Carla processes we launch to make the cleanup easier
@@ -207,7 +225,7 @@ def check_collision(py_measurements):
     m = py_measurements
     collided = (
         m["collision_vehicles"] > 0 or m["collision_pedestrians"] > 0 or m["collision_other"] > 0)
-    return bool(collided or m["total_reward"] < -100)
+    return bool(collided or m["total_reward"] < -1)
 
 class CarlaEnv(gym.Env):
     def __init__(self, config=ENVIRONMENT_CONFIG):
@@ -225,16 +243,16 @@ class CarlaEnv(gym.Env):
         if config["discrete_actions"]:
             self.action_space = Discrete(len(DISCRETE_ACTIONS))
         else:
-            self.action_space = Box(low=-1.0, high=1.0, shape=(2,), dtype=np.uint8)
+            self.action_space = Box(low=-1.0, high=1.0, shape=(ACTION_DIMENSIONS,), dtype=np.float32)
 
-        if config["use_depth_camera"]:
-            image_space = Box(low=-1.0, high=1.0,
+        if config["use_gray_or_depth_image"]:
+            image_space = Box(low=0, high=255,
                               shape=(config["image_y_res"], config["image_x_res"], 1 * config["framestack"]),
-                              dtype=np.float32)
+                              dtype=np.uint8)
         else:
-            image_space = Box(low=0.0, high=255.0,
-                              shape=(config["image_y_res"], config["image_x_res"],3 * config["framestack"]),
-                              dtype=np.float32)
+            image_space = Box(low=0, high=255,
+                              shape=(config["image_y_res"], config["image_x_res"], 3 * config["framestack"]),
+                              dtype=np.uint8)
 
         if self.config["use_image_only_observations"]:
             self.observation_space = image_space
@@ -254,7 +272,7 @@ class CarlaEnv(gym.Env):
         self.global_steps = 0
         self.total_reward = 0
         self.prev_measurement = None
-        self.prev_image = None
+        self.images = deque([], maxlen=config["framestack"])
         self.episode_id = None
         self.measurements_file = None
         self.weather = None
@@ -314,6 +332,7 @@ class CarlaEnv(gym.Env):
             live_carla_processes.remove(pgid)
             self.server_port = None
             self.server_process = None
+            self.images.clear()
 
     def __del__(self):
         self.clear_server_state()
@@ -377,10 +396,13 @@ class CarlaEnv(gym.Env):
         scene = self.client.load_settings(settings)
         positions = scene.player_start_spots
         # 读取配置文件中的start_pos, end_pos
-        straight_poses_tasks_len = len(scenario_config["Straight_Poses_Town01"])
-        random_position_task = scenario_config["Straight_Poses_Town01"][np.random.randint(straight_poses_tasks_len)]
-        self.scenario["start_pos_id"] = random_position_task[0]
-        self.scenario["end_pos_id"] = random_position_task[1]
+        if self.config["use_random_position_points"]:
+            straight_poses_tasks_len = len(scenario_config["Straight_Poses_Town01"])
+            random_position_task = scenario_config["Straight_Poses_Town01"][np.random.randint(straight_poses_tasks_len)]
+            self.scenario["start_pos_id"] = random_position_task[0]
+            self.scenario["end_pos_id"] = random_position_task[1]
+        else:
+            pass
         self.start_pos = positions[self.scenario["start_pos_id"]]
         self.end_pos = positions[self.scenario["end_pos_id"]]
         self.start_coord = [self.start_pos.location.x, self.start_pos.location.y]
@@ -401,25 +423,24 @@ class CarlaEnv(gym.Env):
 
     def encode_observation(self, image, py_measurements):
 
-        assert self.config["framestack"] in [1, 2]
+        assert self.config["framestack"] in [1, 2, 3, 4]
 
-        prev_image = self.prev_image
-        self.prev_image = image
-
-        if prev_image is None:
-            prev_image = image
+        while len(self.images) < self.config["framestack"]:
+            self.images.append(image)
         # 将每一帧存入frame队列
-        if self.config["framestack"] == 2:
-            image = np.concatenate([prev_image, image], axis=2)
+        self.images.append(image)
+        images = np.array(self.images)
+        shape0, shape1, shape2 = images.shape
+        images = images.reshape(shape1,shape2,shape0)
+
 
         if self.config["use_image_only_observations"]:
-            obs = image
+            obs = images
         else:
             obs = (
-                image,
+                images,
                 COMMAND_ORDINAL[py_measurements["next_command"]],
-                [py_measurements["agent_forward_speed_post_process"],
-                 py_measurements["distance_to_goal"]])
+                [py_measurements["agent_forward_speed"], py_measurements["distance_to_goal"]])
         self.last_obs = obs
         return obs
 
@@ -436,13 +457,17 @@ class CarlaEnv(gym.Env):
 
         if self.config["discrete_actions"]:
             action = DISCRETE_ACTIONS[int(action)]
+            assert len(action) == ACTION_DIMENSIONS, "Invalid action {}".format(action)
 
-        assert len(action) == 2, "Invalid action {}".format(action)
         # 将离散动作映射到 throttle,brake, steer, 暂时不适用reverse,hand_brake
-        throttle = float(np.clip(action[0], 0, 1))
-        brake = float(np.abs(np.clip(action[0], -1, 0)))
-        steer = float(np.clip(action[1], -1, 1))
-        reverse = False
+        THROTTLE_INDEX = 0
+        BRAKE_INDEX = 1
+        STEER_INDEX = 2
+        REVERSE_INDEX = 3
+        throttle = float(np.clip(action[THROTTLE_INDEX], 0, 1))
+        brake = float(np.clip(action[BRAKE_INDEX], 0, 1))
+        steer = float(np.clip(action[STEER_INDEX], -1, 1))
+        reverse = bool(np.clip(action[REVERSE_INDEX], 0, 1))
         hand_brake = False
 
         # if self.config["verbose"]:
@@ -455,7 +480,7 @@ class CarlaEnv(gym.Env):
         image, py_measurements = self._read_observation()
 
         # if self.config["verbose"]:
-        #     DEBUG_PRINT("Next command", py_measurements["next_command"])
+        DEBUG_PRINT("Next command", py_measurements["next_command"])
 
         if type(action) is np.ndarray:
             py_measurements["action"] = [float(a) for a in action]
@@ -472,8 +497,8 @@ class CarlaEnv(gym.Env):
         
         self.total_reward += reward
 
-        if self.config["verbose"]:
-            DEBUG_PRINT("Current total reward {:+.2f}".format(self.total_reward))
+        # if self.config["verbose"]:
+        DEBUG_PRINT("Current total reward {:+.2f}".format(self.total_reward))
 
         py_measurements["reward"] = reward
         py_measurements["total_reward"] = self.total_reward
@@ -491,18 +516,33 @@ class CarlaEnv(gym.Env):
         return (self.encode_observation(image, py_measurements), reward, done, py_measurements)
 
     def preprocess_image(self, image):
-        # 将image.data 范围[-1.0, 1.0]
+
+        # 将image.data 范围[0, 255]
         if self.config["use_depth_camera"]:
-            data = (image.data - 0.5) * 2
+            # raw depth image 范围[0,1]
+            data = image.data * 255
+            # DEBUG_PRINT("image shape: ", data.shape)
             # 因为图片保存时x,y倒置
             data = data.reshape(self.config["render_y_res"], self.config["render_x_res"], 1)
             data = cv2.resize(data, (self.config["image_x_res"], self.config["image_y_res"]), interpolation=cv2.INTER_AREA) #shrink the image
-            # 将depth image扩展成 shape=(image_x_res, image_y_res, 1)
-            data = np.expand_dims(data, 2)
+
         else:
             data = image.data.reshape(self.config["render_y_res"], self.config["render_x_res"], 3)
+
+            if self.config["use_gray_or_depth_image"]:
+                data = cv2.cvtColor(data, cv2.COLOR_RGB2GRAY)
+
             data = cv2.resize(data, (self.config["image_x_res"], self.config["image_y_res"]),interpolation=cv2.INTER_AREA)
-            data = (data.astype(np.float32) - 128) / 128
+
+        data = data.astype(np.uint8)
+
+        # mean, std = data.mean(), data.std()
+        # # DEBUG_PRINT("image mean: {:.2f}, image std: {:.2f}".format(mean, std))
+        # if np.isnan(std):
+        #     pass
+        # else:
+        #     data = (data - mean) / (std + 0.00001)
+
         return data
 
     def _read_observation(self):
@@ -557,7 +597,7 @@ class CarlaEnv(gym.Env):
             "agent_location_y": current_measurement.transform.location.y,
             "agent_orientation_x": current_measurement.transform.orientation.x,
             "agent_orientation_y": current_measurement.transform.orientation.y,
-            "agent_forward_speed_post_process": (current_measurement.forward_speed / MAX_SPEED_LIMIT)*100,
+            "agent_forward_speed": current_measurement.forward_speed,
             "distance_to_goal": distance_to_goal,
             "distance_to_goal_euclidean": distance_to_goal_euclidean,
             "collision_vehicles": current_measurement.collision_vehicles,
@@ -601,18 +641,19 @@ class CarlaEnv(gym.Env):
 
         # Distance travelled toward the goal in m
         # constarined into [-100, +100]
-        reward += REWARD_ASSIGN_PARAMETERS["location_coefficient"] * np.clip((prev_dist - cur_dist), -100.0, 100.0)
+        reward += REWARD_ASSIGN_PARAMETERS["location_coefficient"] * np.clip((prev_dist - cur_dist)/100, -10.0, 10.0)
 
         # Change in speed (km/hr)
         # limit speed less than 30km/h
         # 如果超速了，则把reward换做负号
-        if current_measurement["is_overspeed"]:
-            reward -= REWARD_ASSIGN_PARAMETERS["speed_coefficient"] * (
-                    current_measurement["agent_forward_speed_post_process"] - self.prev_measurement["agent_forward_speed_post_process"])
-        else:
-            reward += REWARD_ASSIGN_PARAMETERS["speed_coefficient"] * (
-                    current_measurement["agent_forward_speed_post_process"] - self.prev_measurement["agent_forward_speed_post_process"])
-
+        # if current_measurement["is_overspeed"]:
+        #     reward -= REWARD_ASSIGN_PARAMETERS["speed_coefficient"] * (
+        #             current_measurement["agent_forward_speed"] - self.prev_measurement["agent_forward_speed"])
+        # else:
+        #     reward += REWARD_ASSIGN_PARAMETERS["speed_coefficient"] * (
+        #             current_measurement["agent_forward_speed"] - self.prev_measurement["agent_forward_speed"])
+        reward += REWARD_ASSIGN_PARAMETERS["speed_coefficient"] * (
+             current_measurement["agent_forward_speed"] - self.prev_measurement["agent_forward_speed"])
 
         # New collision damage
         reward += REWARD_ASSIGN_PARAMETERS["collision_coefficient"] * (
