@@ -453,3 +453,20 @@ def load_variables(load_path, variables=None, sess=None):
             restores.append(v.assign(loaded_params[v.name]))
 
     sess.run(restores)
+
+def get_vars(scope):
+    '''
+       获取命名空间scope内的变量
+    :param scope:
+    :return:
+    '''
+    return [x for x in tf.global_variables() if scope in x.name]
+
+def count_vars(scope):
+    '''
+          返回命名空间scope内变量的个数
+    :param scope:
+    :return:
+    '''
+    v = get_vars(scope)
+    return sum([np.prod(var.shape.as_list()) for var in v])
