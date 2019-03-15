@@ -43,38 +43,40 @@
 
     2019-03-12:   1.0.0       修改action_space为4维;
                               framestack 改为4，采用deque存储, image格式改为np.uint8;
+
+    2019-03-15:   1.0.0       ACTION_SPACE改为3;
+                              定义REWARD_THRESHOLD_LOW = -100
                               
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
 *********************************************************************************************************
 """
+import os
+import sys
+import cv2
+import random
+import signal
+import time
+import json
+import gym
+import atexit
+import subprocess
+import traceback
+import numpy as np
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from collections import deque
 from datetime import datetime
-import atexit
-import cv2
-import os
-import sys
-import random
-import signal
-import subprocess
-import time
-import traceback
-import json
-import numpy as np
-import gym
 from gym.spaces import Box, Discrete, Tuple
-import tensorflow as tf
-from baselines.common.mpi_running_mean_std import RunningMeanStd
+sys.path.append("/home/fc/projects/carla-DRL/utils/")
+from common import DEBUG_PRINT as DEBUG_PRINT
 
 # Set this to the path to your Carla binary
 SERVER_BINARY = os.environ.get("CARLA_SERVER", os.path.expanduser("~/toolkits/CARLA/carla-0.8.2/CarlaUE4.sh"))
 assert os.path.exists(SERVER_BINARY), "CARLA_SERVER environment variable is not set properly. Please check and retry"
 
-sys.path.append("/home/fc/projects/carla-DRL/utils/")
-from common import DEBUG_PRINT as DEBUG_PRINT
+
 
 # Import Carla python client API funcs
 try:
@@ -145,19 +147,25 @@ ENVIRONMENT_CONFIG = {
 RETRIES_ON_ERROR = 10
 # max speed km/h
 MAX_SPEED_LIMIT = 30
+# the threshold for total_reward
+REWARD_THRESHOLD_LOW = -1.0
 # Define the discrete action space
-ACTION_DIMENSIONS = 4
+ACTION_DIMENSIONS = 3
+THROTTLE_INDEX = 0
+BRAKE_INDEX = 0
+STEER_INDEX = 1
+REVERSE_INDEX = 2
 DISCRETE_ACTIONS = {
     #  throttle brake steer reverse
-    0: [0.0, 0.0, 0.0, 0.0],    # Coast
-    1: [0.0, 0.0, -0.5, 0.0],   # Turn Left
-    2: [0.0, 0.0, 0.5, 0.0],    # Turn Right
-    3: [1.0, 0.0, 0.0, 0.0],    # Forward
-    4: [0.0, 0.5,0.0, 0.0],   # Brake
-    5: [1.0, 0.0, -0.5, 0.0],   # Bear Left & accelerate
-    6: [1.0, 0.0, 0.5, 0.0],    # Bear Right & accelerate
-    7: [0.0, 0.5,-0.5, 0.0],  # Bear Left & decelerate
-    8: [0.0, 0.5, 0.5, 0.0],   # Bear Right & decelerate
+    0: [0.0, 0.0, 0.0],    # Coast
+    1: [0.0, -0.5, 0.0],   # Turn Left
+    2: [0.0, 0.5, 0.0],    # Turn Right
+    3: [1.0, 0.0, 0.0],    # Forward
+    4: [-0.5,0.0, 0.0],   # Brake
+    5: [1.0, -0.5, 0.0],   # Bear Left & accelerate
+    6: [1.0, 0.5, 0.0],    # Bear Right & accelerate
+    7: [-0.5,-0.5, 0.0],  # Bear Left & decelerate
+    8: [-0.5, 0.5, 0.0],   # Bear Right & decelerate
     # 9: [0.0, 0.0, -0.5, 1.0],  # Turn back Left
     # 10: [0.0, 0.0, 0.5, 1.0],  # Turn back Right
     # 11: [1.0, 0.0, 0.0, 1.0],  # Backward
@@ -223,9 +231,8 @@ def check_collision(py_measurements):
      :return: bool
      """
     m = py_measurements
-    collided = (
-        m["collision_vehicles"] > 0 or m["collision_pedestrians"] > 0 or m["collision_other"] > 0)
-    return bool(collided or m["total_reward"] < -1)
+    collided = (m["collision_vehicles"] > 0 or m["collision_pedestrians"] > 0 or m["collision_other"] > 0)
+    return bool(collided)
 
 class CarlaEnv(gym.Env):
     def __init__(self, config=ENVIRONMENT_CONFIG):
@@ -284,7 +291,10 @@ class CarlaEnv(gym.Env):
         self.last_obs = None
 
     def init_server(self):
-
+        '''
+               启动carla仿真环境
+        :return:
+        '''
         DEBUG_PRINT("Initializing new Carla server...")
         # Create a new server process and start the client.
         self.server_port = random.randint(10000,60000)
@@ -318,6 +328,10 @@ class CarlaEnv(gym.Env):
                 time.sleep(2)
 
     def clear_server_state(self):
+        '''
+                断开client连接, 清除进程
+        :return:
+        '''
         DEBUG_PRINT("Clearing Carla server state")
         try:
             if self.client:
@@ -422,7 +436,12 @@ class CarlaEnv(gym.Env):
         return self.encode_observation(self.preprocess_image(image), py_measurements)
 
     def encode_observation(self, image, py_measurements):
-
+        '''
+                stack raw image and measurments data
+        :param image:
+        :param py_measurements:
+        :return:
+        '''
         assert self.config["framestack"] in [1, 2, 3, 4]
 
         while len(self.images) < self.config["framestack"]:
@@ -454,20 +473,20 @@ class CarlaEnv(gym.Env):
             return (self.last_obs, 0.0, True, {})
 
     def step_env(self, action):
-
+        '''
+                更新环境: 发送控制信息给环境, 读取传感器数据,计算奖励,返回observation
+        :param action:
+        :return:
+        '''
         if self.config["discrete_actions"]:
             action = DISCRETE_ACTIONS[int(action)]
             assert len(action) == ACTION_DIMENSIONS, "Invalid action {}".format(action)
 
         # 将离散动作映射到 throttle,brake, steer, 暂时不适用reverse,hand_brake
-        THROTTLE_INDEX = 0
-        BRAKE_INDEX = 1
-        STEER_INDEX = 2
-        REVERSE_INDEX = 3
         throttle = float(np.clip(action[THROTTLE_INDEX], 0, 1))
-        brake = float(np.clip(action[BRAKE_INDEX], 0, 1))
+        brake = float(abs(np.clip(action[BRAKE_INDEX], -1, 0)))
         steer = float(np.clip(action[STEER_INDEX], -1, 1))
-        reverse = bool(np.clip(action[REVERSE_INDEX], 0, 1))
+        reverse = bool(np.clip(action[REVERSE_INDEX], 0, 1) >= 0.5)
         hand_brake = False
 
         # if self.config["verbose"]:
@@ -505,6 +524,7 @@ class CarlaEnv(gym.Env):
         
         done = ( self.global_steps > self.scenario["max_steps"] or
                  py_measurements["next_command"] == "REACH_GOAL" or
+                 self.total_reward < REWARD_THRESHOLD_LOW or
                 (self.config["early_terminate_on_collision"] and check_collision(py_measurements)))
         
         py_measurements["done"] = done
@@ -515,19 +535,23 @@ class CarlaEnv(gym.Env):
 
         return (self.encode_observation(image, py_measurements), reward, done, py_measurements)
 
-    def preprocess_image(self, image):
-
+    def preprocess_image(self, raw_image):
+        '''
+                处理raw image
+        :param image:
+        :return:
+        '''
         # 将image.data 范围[0, 255]
         if self.config["use_depth_camera"]:
             # raw depth image 范围[0,1]
-            data = image.data * 255
+            data = raw_image.data * 255
             # DEBUG_PRINT("image shape: ", data.shape)
             # 因为图片保存时x,y倒置
             data = data.reshape(self.config["render_y_res"], self.config["render_x_res"], 1)
             data = cv2.resize(data, (self.config["image_x_res"], self.config["image_y_res"]), interpolation=cv2.INTER_AREA) #shrink the image
 
         else:
-            data = image.data.reshape(self.config["render_y_res"], self.config["render_x_res"], 3)
+            data = raw_image.data.reshape(self.config["render_y_res"], self.config["render_x_res"], 3)
 
             if self.config["use_gray_or_depth_image"]:
                 data = cv2.cvtColor(data, cv2.COLOR_RGB2GRAY)
@@ -546,7 +570,11 @@ class CarlaEnv(gym.Env):
         return data
 
     def _read_observation(self):
-        # Read the data produced by the server this frame.
+        '''
+        Read the data produced by the server this frame
+        :return: image and measurements
+        '''
+
         measurements, sensor_data = self.client.read_data()
 
         # Print some of the measurements.
