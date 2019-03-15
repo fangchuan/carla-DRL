@@ -48,11 +48,14 @@
     2019-03-13:   1.0.0      revise learn函数, 将eval_env相关代码删除;
                              添加argumentParser, 增加save_model, load_model, play功能(未测试);
 
+    2019-03-15:   1.0.0      使用自定义network, 每一层后跟layer_norm, 最后的激活函数换为tanh;
+                             使用ReplayBuffer替换Memory;
 
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
 *********************************************************************************************************
 """
+import sys
 import os
 import time
 import gym
@@ -66,15 +69,15 @@ from datetime import datetime
 from collections import deque
 from drl_algorithm.ddpg.ddpg import DDPG
 from drl_algorithm.ddpg.model import Actor, Critic
-from baselines.ddpg.memory import Memory
 from baselines.ddpg.noise import AdaptiveParamNoiseSpec, NormalActionNoise, OrnsteinUhlenbeckActionNoise
 from baselines.common import set_global_seeds
 from baselines.common.models import register
-from baselines import logger
+from utils import logger
 from environment import carla_gym
 from utils.common import load_variables, save_variables
 from utils.common import common_arg_parser
-
+from utils.common import get_vars, count_vars
+from utils.replay_buffer import ReplayBuffer
 try:
     from mpi4py import MPI
 except ImportError:
@@ -85,18 +88,18 @@ except ImportError:
 def actor_critic_network(**net_kwargs):
     def actor_critic_net(x):
         out = tf.cast(x, dtype=tf.float32) / 255.0
-        out = layers.conv2d(out, 32, kernel_size=[8, 8], stride=4, padding='SAME',
-                            activation_fn=tf.nn.relu)  # normalizer_fn=tf.nn.batch_normalization)
+        out = layers.conv2d(out, 32, kernel_size=[8, 8], stride=4, padding='SAME', activation_fn=tf.nn.relu)  # normalizer_fn=tf.nn.batch_normalization)
         out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
-        out = tf.contrib.layers.layer_norm(out, center=True, scale=True)
+        out = layers.layer_norm(out, center=True, scale=True)
         out = layers.conv2d(out, 64, kernel_size=[4, 4], stride=2, padding='SAME', activation_fn=tf.nn.relu)
         out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
-        out = tf.contrib.layers.layer_norm(out, center=True, scale=True)
-        out = layers.conv2d(out, 192, kernel_size=[3, 3], stride=1, padding='SAME', activation_fn=tf.nn.relu)
-        out = tf.contrib.layers.layer_norm(out, center=True, scale=True)
-        reshape = tf.reshape(out, shape=[-1, out.get_shape()[1] * out.get_shape()[2] * 192])
-        out = layers.fully_connected(reshape, num_outputs=512, activation_fn=tf.nn.relu)
         out = layers.layer_norm(out, center=True, scale=True)
+        out = layers.conv2d(out, 64, kernel_size=[3, 3], stride=1, padding='SAME', activation_fn=tf.nn.relu)
+        out = layers.layer_norm(out, center=True, scale=True)
+        reshape = tf.reshape(out, shape=[-1, out.get_shape()[1] * out.get_shape()[2] * 64])
+        out = layers.fully_connected(reshape, num_outputs=512, activation_fn=None)
+        out = layers.layer_norm(out, center=True, scale=True)
+        out = tf.nn.tanh(out)
         return out
     return actor_critic_net
 
@@ -152,12 +155,12 @@ def learn(network, env,
     action_range = (env.action_space.low, env.action_space.high)
 
     # random replay buffer
-
-    memory = Memory(limit=int(memory_size), action_shape=action_shape, observation_shape=obs_shape)
+    # memory = Memory(limit=int(memory_size), action_shape=action_shape, observation_shape=obs_shape)
+    memory = ReplayBuffer(int(memory_size))
     # critic网络
-    critic = Critic(network=network,**network_kwargs)
+    critic = Critic(name="critic", network=network,**network_kwargs)
     # actor网络
-    actor = Actor(number_actions, network=network, **network_kwargs)
+    actor = Actor(number_actions, name="actor", network=network, **network_kwargs)
 
     # 添加探索策略: 使用action_noise 或param_noise
     action_noise = None
@@ -196,6 +199,17 @@ def learn(network, env,
                  clip_norm=clip_norm,
                  reward_scale=reward_scale)
 
+    sess = Util.get_session()
+    # 初始化全局变量, 初始化目标网络 ,如果采用分布式并行训练, 同步optimizer
+    agent.initialize(sess)
+    sess.graph.finalize()
+
+    # 估计网络中变量数目：只占用显存的变量
+    logger.info(" the network use {} varibales".format(count_vars("critic")))
+    logger.info(" the network use {} varibales".format(count_vars("actor")))
+
+
+    # 加载模型文件
     if model_file_load_path is not None:
         if os.path.exists(model_file_load_path):
             load_variables(model_file_load_path)
@@ -206,14 +220,8 @@ def learn(network, env,
     logger.info('Using agent with the following configuration:')
     logger.info(str(agent.__dict__.items()))
 
-    sess = Util.get_session()
-    # 初始化全局变量, 初始化目标网络
-    # 如果采用分布式并行训练, 同步optimizer
-    agent.initialize(sess)
-    sess.graph.finalize()
     # reset agent internal state
     agent.reset()
-
     obs = env.reset()
     if eval_env is not None:
         eval_obs = eval_env.reset()
@@ -281,9 +289,8 @@ def learn(network, env,
 
             # Train.
             for t_train in range(nb_train_steps):
-                logger.log('training 50 steps')
                 # Adapt param noise, if necessary.
-                if memory.nb_entries >= batch_size and t_train % param_noise_adaption_interval == 0:
+                if len(memory) >= batch_size and t_train % param_noise_adaption_interval == 0:
                     distance = agent.adapt_param_noise()
                     epoch_adaptive_distances.append(distance)
 
@@ -339,8 +346,8 @@ def learn(network, env,
 
     return agent
 
-if __name__ == '__main__':
 
+def main(argvs):
     argparser = common_arg_parser()
     args = argparser.parse_args()
     model_file_save_path = args.save_path
@@ -354,8 +361,8 @@ if __name__ == '__main__':
         logger.configure(format_strs=[])
 
     with Util.make_session(num_cpu=8):
-
-        model_file = "carla-ddpg-model-{}.ckpt".format(datetime.today())
+        model_file_name = datetime.now().strftime("carla-ddpg-model-%Y-%m-%d-%H")
+        model_file = model_file_name + '.ckpt'
 
         env = gym.make('Carla-v0')
 
@@ -363,12 +370,13 @@ if __name__ == '__main__':
             os.makedirs(model_file_save_path, exist_ok=True)
         model_file = os.path.join(model_file_save_path, model_file)
 
-
-        agent = learn(network='cnn',
+        agent = learn(network='my_actor_critic_net',
                       env=env,
                       seed=12345,
                       total_steps=total_step_numbers,
                       noise_type="adaptive-param_0.2",
+                      actor_lr=1e-3,
+                      critic_lr=1e-3,
                       model_file_load_path=model_file_load_path,
                       model_file_save_path=model_file)
 
@@ -393,3 +401,10 @@ if __name__ == '__main__':
                 if done:
                     obs = env.reset()
                     logger.dump_tabular()
+
+        return agent
+
+
+
+if __name__ == '__main__':
+    main(sys.argv)

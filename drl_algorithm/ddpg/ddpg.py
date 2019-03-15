@@ -24,6 +24,7 @@
 
 	2019-03-13：   1.0.0      添加一些注释信息;
 
+    2019-03-15:    1.0.0      修改setup_critic_optimizer(), 使之适用自定义网络;
 
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
@@ -128,6 +129,17 @@ def get_perturbed_actor_updates(actor, perturbed_actor, param_noise_stddev):
 
 
 class DDPG(object):
+    '''
+        ddpg description:
+                    1. 采用normalized_observation, 可选normalized_return;
+                    2. 创建 actor, critic, target_actor, target_critic四个网络;
+                    3. target_Q = target_critic(obs_t1, target_actor)
+                    4. 更新过程:
+                                a.根据MSE(采样动作的Q值 - target_Q)更新critic;
+                                b.根据 -actor输出动作的Q值 更新actor;
+                                c.根据polyak更新target actor, target critic;
+
+    '''
     def __init__(self, actor, critic, memory, observation_shape, action_shape, param_noise=None, action_noise=None,
         gamma=0.99, tau=0.001, normalize_returns=False, enable_popart=False, normalize_observations=True,
         batch_size=128, observation_range=(-5., 5.), action_range=(-1., 1.), return_range=(-np.inf, np.inf),
@@ -206,10 +218,10 @@ class DDPG(object):
         if self.param_noise is not None:
             self.setup_param_noise(normalized_obs0)
 
-        # 将actor网络的loss设为 -Q(s,a=actor(normalized_obs0))
+        # 将actor网络的loss设为 -critic_with_actor_tf
         self.setup_actor_optimizer()
 
-        # critic网络的loss设为 MSE（critic_with_actor_tf - target_Q）
+        # critic网络的loss设为 MSE（normalized_critic_tf - target_Q）
         self.setup_critic_optimizer()
         if self.normalize_returns and self.enable_popart:
             self.setup_popart()
@@ -259,12 +271,12 @@ class DDPG(object):
         normalized_critic_target_tf = tf.clip_by_value(normalize(self.critic_target, self.ret_rms), self.return_range[0], self.return_range[1])
         self.critic_loss = tf.reduce_mean(tf.square(self.normalized_critic_tf - normalized_critic_target_tf))
         if self.critic_l2_reg > 0.:
-            critic_reg_vars = [var for var in self.critic.trainable_vars if var.name.endswith('/w:0') and 'output' not in var.name]
+            critic_reg_vars = [var for var in self.critic.trainable_vars if var.name.endswith('/weights:0') and 'output' not in var.name]
             for var in critic_reg_vars:
                 logger.info('  regularizing: {}'.format(var.name))
             logger.info('  applying l2 regularization with {}'.format(self.critic_l2_reg))
             critic_reg = tc.layers.apply_regularization(
-                tc.layers.l2_regularizer(self.critic_l2_reg),
+                regularizer=tc.layers.l2_regularizer(self.critic_l2_reg),
                 weights_list=critic_reg_vars
             )
             self.critic_loss += critic_reg
@@ -356,23 +368,32 @@ class DDPG(object):
         return action, q, None, None
 
     def store_transition(self, obs0, action, reward, obs1, terminal1):
+        '''
+              保存经历数据
+        :param obs0: t时刻的observation
+        :param action:  t时刻的action
+        :param reward:  t时刻的reward
+        :param obs1:    t+1时刻的observation
+        :param terminal1: t时刻的terminal/done
+        :return:
+        '''
         reward *= self.reward_scale
-
-        B = obs0.shape[0]
-        for b in range(B):
-            self.memory.append(obs0[b], action[b], reward[b], obs1[b], terminal1[b])
+        # 防止启动多个仿真环境异步训练, 这样写可以区分不同环境收集到的数据
+        num_envs = obs0.shape[0]
+        for b in range(num_envs):
+            self.memory.add(obs0[b], action[b], reward[b], obs1[b], terminal1[b])
             if self.normalize_observations:
                 self.obs_rms.update(np.array([obs0[b]]))
 
     def train(self):
         # Get a batch.
-        batch = self.memory.sample(batch_size=self.batch_size)
+        batch_obs0, batch_actions, batch_rewards, batch_obs1, batch_terminals0 = self.memory.sample(batch_size=self.batch_size)
 
         if self.normalize_returns and self.enable_popart:
             old_mean, old_std, target_Q = self.sess.run([self.ret_rms.mean, self.ret_rms.std, self.target_Q], feed_dict={
-                self.obs1: batch['obs1'],
-                self.rewards: batch['rewards'],
-                self.terminals1: batch['terminals1'].astype('float32'),
+                self.obs1: batch_obs1,
+                self.rewards: batch_rewards,
+                self.terminals1: batch_terminals0.astype('float32'),
             })
             self.ret_rms.update(target_Q.flatten())
             self.sess.run(self.renormalize_Q_outputs_op, feed_dict={
@@ -391,16 +412,16 @@ class DDPG(object):
             # assert (np.abs(target_Q - target_Q_new) < 1e-3).all()
         else:
             target_Q = self.sess.run(self.target_Q, feed_dict={
-                self.obs1: batch['obs1'],
-                self.rewards: batch['rewards'],
-                self.terminals1: batch['terminals1'].astype('float32'),
+                self.obs1: batch_obs1,
+                self.rewards: batch_rewards,
+                self.terminals1: batch_terminals0.astype('float32'),
             })
 
         # Get all gradients and perform a synced update.
         ops = [self.actor_grads, self.actor_loss, self.critic_grads, self.critic_loss]
         actor_grads, actor_loss, critic_grads, critic_loss = self.sess.run(ops, feed_dict={
-            self.obs0: batch['obs0'],
-            self.actions: batch['actions'],
+            self.obs0: batch_obs0,
+            self.actions: batch_actions,
             self.critic_target: target_Q,
         })
         self.actor_optimizer.update(actor_grads, stepsize=self.actor_lr)
@@ -423,9 +444,10 @@ class DDPG(object):
             # Get a sample and keep that fixed for all further computations.
             # This allows us to estimate the change in value for the same set of inputs.
             self.stats_sample = self.memory.sample(batch_size=self.batch_size)
+        sample_obs0, sample_actions, _, _, _ = self.stats_sample
         values = self.sess.run(self.stats_ops, feed_dict={
-            self.obs0: self.stats_sample['obs0'],
-            self.actions: self.stats_sample['actions'],
+            self.obs0: sample_obs0,
+            self.actions: sample_actions,
         })
 
         names = self.stats_names[:]
@@ -447,12 +469,12 @@ class DDPG(object):
             return 0.
 
         # Perturb a separate copy of the policy to adjust the scale for the next "real" perturbation.
-        batch = self.memory.sample(batch_size=self.batch_size)
+        batch_obs0,_,_,_,_ = self.memory.sample(batch_size=self.batch_size)
         self.sess.run(self.perturb_adaptive_policy_ops, feed_dict={
             self.param_noise_stddev: self.param_noise.current_stddev,
         })
         distance = self.sess.run(self.adaptive_policy_distance, feed_dict={
-            self.obs0: batch['obs0'],
+            self.obs0: batch_obs0,
             self.param_noise_stddev: self.param_noise.current_stddev,
         })
 

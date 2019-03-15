@@ -20,7 +20,7 @@
 	                         修改Critic, observation经过network的输出, 在输出上concatenate action_state, 然后再经过一层全连接层;
 	                         param_noise好像还有问题;
 
-
+    2019-03-15:   1.0.0      给Actor网络最后添加layer_norm;
 
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
@@ -58,6 +58,7 @@ class Actor(Model):
         with tf.variable_scope(self.name, reuse=tf.AUTO_REUSE):
             x = self.network_builder(obs)
             x = tf.layers.dense(x, self.nb_actions, kernel_initializer=tf.random_uniform_initializer(minval=-3e-3, maxval=3e-3))
+            x = tf.contrib.layers.layer_norm(x, center=True, scale=True)
             x = tf.nn.tanh(x)
         return x
 

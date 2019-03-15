@@ -50,3 +50,10 @@
 2019-03-13: 将image存储格式改为np.uint8, 使用depth_image, replay_buffer为50000, dqn_test测试总共占用内存3.2G
             修改action_space为Box(shape=(4,));
             ddpg critic网络中, 将action_state与observation经过神经网络(最后一层为fc)后的vector拼接在一起;
+          
+2019-03-14: 将observation改成(0,255) uint8类型后, dqn很容易出现过拟合现象, 跑一会儿mean_reward就下降;
+            目前dqn网络参数总量220W
+            ddpg网络参数总量 3434562+ 6744720
+            
+2019-03-15: 把DDPG用的网络换成自己定义的网络,每个conv层和fc层都添加layer_norm,参数量=488002+849828;
+            DDPG的memory换成utils/replay_buffer中的ReplayBuffer,大大降低内存占用;

@@ -36,36 +36,28 @@ import gym
 import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
-# from tensorboardX import SummaryWriter
+import os
+import sys
+from mpi4py import MPI
+from collections import deque
 
 import baselines.common.tf_util as Util
-from baselines import logger
 from baselines.deepq.replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
 from baselines.deepq.utils import ObservationInput
 from baselines.common.schedules import LinearSchedule
+from datetime import datetime
 from environment import carla_gym
 from drl_algorithm.dqn import build_graph
 from utils.common import DEBUG_PRINT as DEBUG_PRINT
 from utils.common import common_arg_parser
 from utils.common import NormalizedEnv
 from utils.common import load_variables, save_variables
-
-
-import os
-import sys
-from mpi4py import MPI
-from collections import deque
+from utils.common import get_vars, count_vars
+from utils import logger
 
 
 
 
-# observation shape: (224, 224, 6)
-# q_function/Conv/Relu [2, 56, 56, 32]
-# q_function/MaxPool2D/MaxPool [2, 27, 27, 32]
-# q_function/Conv_1/Relu [2, 14, 14, 64]
-# q_function/MaxPool2D_1/MaxPool [2, 6, 6, 64]
-# q_function/Conv_2/Relu [2, 6, 6, 192]
-#
 def q_function(inpt, num_actions, scope, reuse=False):
     """
      q_function模型
@@ -125,6 +117,7 @@ def main(arg):
     UPDATE_TARGET_FREQUENCY = 1000
     MAX_ACCUMULATED_REWARDS = 20.0
     CHECK_POINT_FREQUENCY = 20
+    DQN_SCOPE = "deepq"
 
     if MPI is None or MPI.COMM_WORLD.Get_rank() == 0:
         mpi_rank = 0
@@ -137,9 +130,11 @@ def main(arg):
 
         episode_rewards = deque(maxlen=100)
         episode_reward = 0.0
+        episodes = 1
         mean_100ep_reward = 0  # 最后100episode的平均reward
         saved_mean_reward = None  # 保存的平均reward
-        model_file = "carla-dqn-model.ckpt"
+        model_file_name = datetime.now().strftime("carla-dqn-model-%Y-%m-%d-%H")
+        model_file = model_file_name + '.ckpt'
 
         # Create the environment
         env = gym.make("Carla-v0")
@@ -155,6 +150,7 @@ def main(arg):
             # param_noise=True,
             num_actions=env.action_space.n,
             optimizer=tf.train.AdamOptimizer(learning_rate=LEARN_RATE),
+            scope=DQN_SCOPE
         )
 
         # Create the replay buffer
@@ -180,13 +176,18 @@ def main(arg):
         update_target()
         obs = env.reset()
 
+        # 估计网络中变量数目：只占用显存的变量
+        logger.info(" the network use {} varibales".format(count_vars(DQN_SCOPE)))
+
+        # 保存和加载模型文件
         if not os.path.exists(model_file_save_path):
             os.makedirs(model_file_save_path, exist_ok=True)
         model_file = os.path.join(model_file_save_path, model_file)
-
         if args.load_path is not None:
             load_variables(model_file_load_path)
             logger.log('Loaded model from {}'.format(model_file_load_path))
+            logger.info('Using agent with the following configuration of train:')
+            logger.info(str(train.__dict__.items()))
 
         for step in range(total_step_numbers):
             # Take action and update exploration to the newest value
@@ -201,6 +202,7 @@ def main(arg):
                 obs = env.reset()
                 episode_rewards.append(episode_reward)
                 episode_reward = 0.0
+                episodes += 1
 
             mean_100ep_reward = round(np.mean(episode_rewards), ndigits=2)
 
@@ -222,9 +224,9 @@ def main(arg):
                 if step % UPDATE_TARGET_FREQUENCY == 0:
                     update_target()
 
-            if done and len(episode_rewards) % CHECK_POINT_FREQUENCY == 0:
+            if done and episodes % CHECK_POINT_FREQUENCY == 0:
                 logger.record_tabular("steps", step)
-                logger.record_tabular("episodes", len(episode_rewards))
+                logger.record_tabular("episodes", episodes)
                 logger.record_tabular("mean_100ep_reward", mean_100ep_reward)
                 logger.record_tabular("time_exploring", int(100 * exploration.value(step)))
                 logger.dump_tabular()
