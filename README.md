@@ -57,3 +57,6 @@
             
 2019-03-15: 把DDPG用的网络换成自己定义的网络,每个conv层和fc层都添加layer_norm,参数量=488002+849828;
             DDPG的memory换成utils/replay_buffer中的ReplayBuffer,大大降低内存占用;
+            
+2019-03-16: 将param_noise换成action_noise, 但网络仍然限于局部最优,表现为agent在原地一直打刹车,增大actions_noise的stddev也没效果;
+            尝试在开始的1W步只进行action_sample,不使用agent.step, 但正常进行agent.train;         

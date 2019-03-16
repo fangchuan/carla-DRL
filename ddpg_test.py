@@ -51,6 +51,9 @@
     2019-03-15:   1.0.0      使用自定义network, 每一层后跟layer_norm, 最后的激活函数换为tanh;
                              使用ReplayBuffer替换Memory;
 
+    2019-03-16:   1.0.0      param_noise居然施加在卷积层了, 实验结果显示agent一直限于局部最优,表现为刹车一直置位;
+                             noise_type改为 normal_action_noise, stddev参考spinup中的0.1;
+
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
 *********************************************************************************************************
@@ -88,7 +91,7 @@ except ImportError:
 def actor_critic_network(**net_kwargs):
     def actor_critic_net(x):
         out = tf.cast(x, dtype=tf.float32) / 255.0
-        out = layers.conv2d(out, 32, kernel_size=[8, 8], stride=4, padding='SAME', activation_fn=tf.nn.relu)  # normalizer_fn=tf.nn.batch_normalization)
+        out = layers.conv2d(out, 32, kernel_size=[8, 8], stride=4, padding='SAME', activation_fn=tf.nn.relu)
         out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
         out = layers.layer_norm(out, center=True, scale=True)
         out = layers.conv2d(out, 64, kernel_size=[4, 4], stride=2, padding='SAME', activation_fn=tf.nn.relu)
@@ -111,7 +114,7 @@ def learn(network, env,
           nb_epoch_cycles=20,
           nb_rollout_steps=100,
           reward_scale=1.0,
-          noise_type='adaptive-param_0.2',
+          noise_type='adaptive-param_0.1',
           normalize_returns=False,
           normalize_observations=True,
           critic_l2_reg=1e-2,
@@ -122,7 +125,7 @@ def learn(network, env,
           gamma=0.99,
           clip_norm=None,
           nb_train_steps=50, # per epoch cycle and MPI worker,
-          nb_eval_steps=100,
+          nb_start_steps=10000,
           batch_size=64, # per MPI worker
           tau=0.01,
           eval_env=None,
@@ -163,6 +166,7 @@ def learn(network, env,
     actor = Actor(number_actions, name="actor", network=network, **network_kwargs)
 
     # 添加探索策略: 使用action_noise 或param_noise
+    # param_noise的stddev默认为0.2
     action_noise = None
     param_noise = None
     if noise_type is not None:
@@ -250,29 +254,27 @@ def learn(network, env,
             #     agent.reset()
             for t_rollout in range(nb_rollout_steps):
                 # Predict next action.
-                action, q, _, _ = agent.step(np.array(obs)[None], apply_noise=True, compute_Q=True)
-                print("action : ", action)
-                action = action.reshape(number_actions)
-                # Execute next action.
-                # if mpi_rank == 0 and render:
-                #     env.render()
-
-                # max_action is of dimension A, whereas action is dimension (nenvs, A) - the multiplication gets broadcasted to the batch
-                new_obs, r, done, info = env.step(max_action * action)  # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
-                # note these outputs are batched from vecenv
+                if steps > nb_start_steps:
+                    action, q, _, _ = agent.step(np.array(obs)[None], apply_noise=True, compute_Q=True)
+                    print("action : ", action)
+                    action = action[0]
+                    # as far as DDPG is concerned, every action is in [-1, 1])
+                    new_obs, r, done, info = env.step(max_action * action)
+                    epoch_qs.append(q)
+                else:
+                    action = env.action_space.sample()
+                    print("action : ", action)
+                    new_obs, r, done, info = env.step(action)
 
                 steps += 1
-                # if mpi_rank == 0 and render:
-                #     env.render()
                 episode_reward += r
                 episode_step += 1
 
                 # Book-keeping.
                 epoch_actions.append(action)
-                epoch_qs.append(q)
                 # 像replay buffer中添加观测数据
                 agent.store_transition(np.array(obs)[None], np.array(action)[None],
-                                       np.array(r)[None], np.array(new_obs)[None], np.array(done)[None]) #the batched data will be unrolled in memory.py's append.
+                                       np.array(r)[None], np.array(new_obs)[None], np.array(done)[None])
 
                 obs = new_obs
 
@@ -316,7 +318,8 @@ def learn(network, env,
         combined_stats['rollout/mean_100ep_Q'] = np.mean(epoch_qs)
         combined_stats['train/100_loss_actor'] = np.mean(epoch_actor_losses)
         combined_stats['train/100_loss_critic'] = np.mean(epoch_critic_losses)
-        combined_stats['train/param_noise_100distance'] = np.mean(epoch_adaptive_distances)
+        if param_noise :
+            combined_stats['train/param_noise_100distance'] = np.mean(epoch_adaptive_distances)
         combined_stats['total/duration'] = duration
         combined_stats['total/steps_per_second'] = float(steps) / float(duration)
         combined_stats['total/episodes'] = episodes
@@ -355,6 +358,18 @@ def main(argvs):
     total_step_numbers = args.total_steps_num
     is_play = args.play
 
+    SEED = 12345
+    ACTOR_CRITIC_NETWORK = "my_actor_critic_net"
+    NOISE_TYPE = "normal_0.1"
+    CRITIC_L2_REGULARIATION = 1e-2
+    ACTOR_LEARN_RATE = 1e-3
+    CRITIC_LEARN_RATE = 1e-3
+    REPLAY_BUFFER_SIZE = 1e4
+    GAMMA = 0.99
+    BATCH_SIZE = 64
+    TARGET_UPDATE_POLYAK = 0.01
+    START_STEPS = 1e4
+
     if MPI is None or MPI.COMM_WORLD.Get_rank() == 0:
         logger.configure()
     else:
@@ -370,13 +385,19 @@ def main(argvs):
             os.makedirs(model_file_save_path, exist_ok=True)
         model_file = os.path.join(model_file_save_path, model_file)
 
-        agent = learn(network='my_actor_critic_net',
+        agent = learn(network=ACTOR_CRITIC_NETWORK,
                       env=env,
-                      seed=12345,
+                      seed=SEED,
                       total_steps=total_step_numbers,
-                      noise_type="adaptive-param_0.2",
-                      actor_lr=1e-3,
-                      critic_lr=1e-3,
+                      noise_type=NOISE_TYPE,
+                      critic_l2_reg=CRITIC_L2_REGULARIATION,
+                      actor_lr=ACTOR_LEARN_RATE,
+                      critic_lr=CRITIC_LEARN_RATE,
+                      gamma=GAMMA,
+                      batch_size=BATCH_SIZE,
+                      tau=TARGET_UPDATE_POLYAK,
+                      nb_start_steps=int(START_STEPS),
+                      memory_size=REPLAY_BUFFER_SIZE,
                       model_file_load_path=model_file_load_path,
                       model_file_save_path=model_file)
 

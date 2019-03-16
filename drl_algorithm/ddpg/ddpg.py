@@ -460,6 +460,12 @@ class DDPG(object):
         return stats
 
     def adapt_param_noise(self):
+        '''
+            更新adaptive_perturbed_actor的标准差, 根据distance规则更新
+            distance定义为adaptive_perturb_actor与actor的平方差,
+            得到distance后再用distance更新 param_noise的标准差
+        :return:
+        '''
         try:
             from mpi4py import MPI
         except ImportError:
@@ -492,6 +498,11 @@ class DDPG(object):
         return mean_distance
 
     def reset(self):
+        '''
+            reset action_noise和param_noise;
+            perturbed_actor根据param_noise当前标准差重置, 重置后后在整个episode中都不变,
+        :return:
+        '''
         # Reset internal state after an episode is complete.
         if self.action_noise is not None:
             self.action_noise.reset()
