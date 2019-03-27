@@ -45,8 +45,14 @@
                               framestack 改为4，采用deque存储, image格式改为np.uint8;
 
     2019-03-15:   1.0.0       ACTION_SPACE改为3;
-                              定义REWARD_THRESHOLD_LOW = -100
-                              
+                              定义REWARD_THRESHOLD_LOW = -100;
+
+    2019-03-17:   1.0.0       修改reward_function: 距离项改为 location_cofficient * np.clip(delta_distance, -10, 10);
+    2019-03-18:   1.0.0       改回reward_function;
+    2019-03-19:   1.0.0       在reset_env()中添加 speedup, 使复位后agent在一个相同初始速度上;
+    2019-03-22:   1.0.0       修改reward_function: 距离项改为 location_cofficient * np.clip(delta_distance, -10, 10);
+
+
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
 *********************************************************************************************************
@@ -69,11 +75,11 @@ import numpy as np
 from collections import deque
 from datetime import datetime
 from gym.spaces import Box, Discrete, Tuple
-sys.path.append("/home/fc/projects/carla-DRL/utils/")
+sys.path.append("/home/fc/PROJECTS/carla-drl-docker/carla-drl/utils/")
 from common import DEBUG_PRINT as DEBUG_PRINT
 
 # Set this to the path to your Carla binary
-SERVER_BINARY = os.environ.get("CARLA_SERVER", os.path.expanduser("~/toolkits/CARLA/carla-0.8.2/CarlaUE4.sh"))
+SERVER_BINARY = os.environ.get("CARLA_SERVER", os.path.expanduser("~/PROJECTS/carla-drl-docker/simulator/CarlaUE4.sh"))
 assert os.path.exists(SERVER_BINARY), "CARLA_SERVER environment variable is not set properly. Please check and retry"
 
 
@@ -123,10 +129,10 @@ scenario_config['weather_distribution'] = weathers
 
 # Default environment configuration
 ENVIRONMENT_CONFIG = {
-    "discrete_actions": False,
+    "discrete_actions": True,
     "use_gray_or_depth_image":True,
     "use_image_only_observations": True,  # Exclude high-level planner inputs & goal info from the observations
-    "server_map": "/Game/Maps/" + scenario_config["city"][0], # Town02
+    "server_map": "/Game/Maps/" + scenario_config["city"][0], # Town01
     "scenarios": scenario_config["Lane_Keep_Town1"], #[scenario_config["Lane_Keep_Town1"],scenario_config["Lane_Keep_Town2"]],
     "use_random_position_points": False,
     "framestack": 4,  # note: only [1, 2, 3,4] currently supported
@@ -148,24 +154,24 @@ RETRIES_ON_ERROR = 10
 # max speed km/h
 MAX_SPEED_LIMIT = 30
 # the threshold for total_reward
-REWARD_THRESHOLD_LOW = -1.0
+REWARD_THRESHOLD_LOW = -100.0
 # Define the discrete action space
-ACTION_DIMENSIONS = 3
+ACTION_DIMENSIONS = 2
 THROTTLE_INDEX = 0
 BRAKE_INDEX = 0
 STEER_INDEX = 1
-REVERSE_INDEX = 2
+# REVERSE_INDEX = 2
 DISCRETE_ACTIONS = {
     #  throttle brake steer reverse
-    0: [0.0, 0.0, 0.0],    # Coast
-    1: [0.0, -0.5, 0.0],   # Turn Left
-    2: [0.0, 0.5, 0.0],    # Turn Right
-    3: [1.0, 0.0, 0.0],    # Forward
-    4: [-0.5,0.0, 0.0],   # Brake
-    5: [1.0, -0.5, 0.0],   # Bear Left & accelerate
-    6: [1.0, 0.5, 0.0],    # Bear Right & accelerate
-    7: [-0.5,-0.5, 0.0],  # Bear Left & decelerate
-    8: [-0.5, 0.5, 0.0],   # Bear Right & decelerate
+    0: [0.0, 0.0],    # Coast
+    1: [0.0, -0.5],   # Turn Left
+    2: [0.0, 0.5],    # Turn Right
+    3: [1.0, 0.0],    # Forward
+    4: [-0.5,0.0],   # Brake
+    5: [1.0, -0.5],   # Bear Left & accelerate
+    6: [1.0, 0.5],    # Bear Right & accelerate
+    7: [-0.5,-0.5],  # Bear Left & decelerate
+    8: [-0.5, 0.5],   # Bear Right & decelerate
     # 9: [0.0, 0.0, -0.5, 1.0],  # Turn back Left
     # 10: [0.0, 0.0, 0.5, 1.0],  # Turn back Right
     # 11: [1.0, 0.0, 0.0, 1.0],  # Backward
@@ -181,8 +187,8 @@ REWARD_ASSIGN_PARAMETERS = {
     "location_coefficient": 1.0,
     "speed_coefficient": 0.05,
     "collision_coefficient": -0.00002,
-    "offroad_coefficient": -2.0,
-    "otherland_coefficient":-2.0
+    "offroad_coefficient": -20.0,
+    "otherland_coefficient":-20.0
 }
 
 live_carla_processes = set()  # To keep track of all the Carla processes we launch to make the cleanup easier
@@ -235,6 +241,12 @@ def check_collision(py_measurements):
     return bool(collided)
 
 class CarlaEnv(gym.Env):
+    
+    metadata = {
+        'render.modes':['human','rgb_array'],
+        'video.frame_per_second':2
+    }
+
     def __init__(self, config=ENVIRONMENT_CONFIG):
         """
         Carla Gym Environment class implementation. Creates an OpenAI Gym compatible driving environment based on
@@ -272,7 +284,7 @@ class CarlaEnv(gym.Env):
         self._spec = lambda: None
         self._spec.id = "Carla-v0"
         self._seed = ENVIRONMENT_CONFIG["seed"]
-
+        self.viewer = None
         self.server_port = None
         self.server_process = None
         self.client = None
@@ -281,7 +293,6 @@ class CarlaEnv(gym.Env):
         self.prev_measurement = None
         self.images = deque([], maxlen=config["framestack"])
         self.episode_id = None
-        self.measurements_file = None
         self.weather = None
         self.scenario = None
         self.start_pos = None
@@ -369,9 +380,8 @@ class CarlaEnv(gym.Env):
         self.global_steps = 0
         self.total_reward = 0
         self.prev_measurement = None
-        self.prev_image = None
+        self.images.clear()
         self.episode_id = datetime.today().strftime("%Y-%m-%d_%H-%M-%S_%f")
-        self.measurements_file = None
 
         # 对Carla环境进行配置
         settings = CarlaSettings()
@@ -405,6 +415,7 @@ class CarlaEnv(gym.Env):
         camera2.set_position(*(self.config['camera_position']))
         settings.add_sensor(camera2)
 
+
         # Now we load these settings into the server. The server replies
         # with a scene description containing the available start spots for the player.
         scene = self.client.load_settings(settings)
@@ -430,6 +441,12 @@ class CarlaEnv(gym.Env):
         # to start the episode.
         DEBUG_PRINT("Starting new episode...")
         self.client.start_episode(self.scenario["start_pos_id"])
+
+        # start the game with some initial speed
+        for i in range(30):
+            self.client.send_control(steer=0.0, throttle=1.0, brake=0.0,
+                                    hand_brake=False, reverse=False)
+
         image, py_measurements = self._read_observation()
         self.prev_measurement = py_measurements
 
@@ -486,7 +503,8 @@ class CarlaEnv(gym.Env):
         throttle = float(np.clip(action[THROTTLE_INDEX], 0, 1))
         brake = float(abs(np.clip(action[BRAKE_INDEX], -1, 0)))
         steer = float(np.clip(action[STEER_INDEX], -1, 1))
-        reverse = bool(np.clip(action[REVERSE_INDEX], 0, 1) >= 0.5)
+        # reverse = bool(np.clip(action[REVERSE_INDEX], 0, 1) >= 0.5)
+        reverse = False
         hand_brake = False
 
         # if self.config["verbose"]:
@@ -659,17 +677,28 @@ class CarlaEnv(gym.Env):
         :return: The scalar reward
         """
         reward = 0.0
-
+        # distance to goal, unit m.
         cur_dist = current_measurement["distance_to_goal"]
-
         prev_dist = self.prev_measurement["distance_to_goal"]
+        # veihcle speed , turn from m/s to km/h
+        cur_speed = current_measurement["agent_forward_speed"] * 3.6
+        prev_speed = self.prev_measurement["agent_forward_speed"] * 3.6
+        # veihcle collision 
+        cur_collision = current_measurement["collision_vehicles"] + current_measurement["collision_pedestrians"] + current_measurement["collision_other"]
+        prev_collision = self.prev_measurement["collision_vehicles"]+self.prev_measurement["collision_pedestrians"]+self.prev_measurement["collision_other"]
+        # veihcle offroad
+        cur_offroad = current_measurement["intersection_offroad"] 
+        prev_offroad = self.prev_measurement["intersection_offroad"]
+        # veihcle other lane
+        cur_otherlane = current_measurement["intersection_otherlane"]
+        prev_otherlane = self.prev_measurement["intersection_otherlane"]
 
         # if self.config["verbose"]:
         #     DEBUG_PRINT("Current distance to goal {}, Previous distance to goal {}".format(cur_dist, prev_dist))
 
         # Distance travelled toward the goal in m
         # constarined into [-100, +100]
-        reward += REWARD_ASSIGN_PARAMETERS["location_coefficient"] * np.clip((prev_dist - cur_dist)/100, -10.0, 10.0)
+        reward += REWARD_ASSIGN_PARAMETERS["location_coefficient"] * np.clip((prev_dist - cur_dist), -10.0, 10.0)
 
         # Change in speed (km/hr)
         # limit speed less than 30km/h
@@ -680,27 +709,31 @@ class CarlaEnv(gym.Env):
         # else:
         #     reward += REWARD_ASSIGN_PARAMETERS["speed_coefficient"] * (
         #             current_measurement["agent_forward_speed"] - self.prev_measurement["agent_forward_speed"])
-        reward += REWARD_ASSIGN_PARAMETERS["speed_coefficient"] * (
-             current_measurement["agent_forward_speed"] - self.prev_measurement["agent_forward_speed"])
+        reward += REWARD_ASSIGN_PARAMETERS["speed_coefficient"] * (cur_speed - prev_speed - 0.1)  # -0.1是为了防止agent停在原地不动
+        # if self.config["verbose"]:
+        # DEBUG_PRINT("Current speed {}, Previous speed {}".format(cur_speed, prev_speed))
 
         # New collision damage
-        reward += REWARD_ASSIGN_PARAMETERS["collision_coefficient"] * (
-            current_measurement["collision_vehicles"] + current_measurement["collision_pedestrians"] + current_measurement["collision_other"]
-           - self.prev_measurement["collision_vehicles"]-self.prev_measurement["collision_pedestrians"]-self.prev_measurement["collision_other"])
+        reward += REWARD_ASSIGN_PARAMETERS["collision_coefficient"] * ( cur_collision - prev_collision)
 
         # New sidewalk intersection
-        reward += REWARD_ASSIGN_PARAMETERS["offroad_coefficient"] * (
-            current_measurement["intersection_offroad"] - self.prev_measurement["intersection_offroad"])
+        reward += REWARD_ASSIGN_PARAMETERS["offroad_coefficient"] * (cur_offroad - prev_offroad)
 
         # New opposite lane intersection
-        reward += REWARD_ASSIGN_PARAMETERS["otherland_coefficient"] * (
-            current_measurement["intersection_otherlane"] - self.prev_measurement["intersection_otherlane"])
+        reward += REWARD_ASSIGN_PARAMETERS["otherland_coefficient"] * (cur_otherlane - prev_otherlane)
 
         return reward
 
+    def render(self, mode='human', close=False):
+        if self.viewer is None:
+            from gym.envs.classic_control import rendering
+            self.viewer = rendering.Viewer(self.config["render_x_res"], self.config["render_y_res"], display=":0")
+        return self.viewer.render(return_rgb_array=True)
+        
 
-import tensorflow as tf
-import tensorflow.contrib.layers as layers
+
+# import tensorflow as tf
+# import tensorflow.contrib.layers as layers
 
 # if __name__ == "__main__":
 #

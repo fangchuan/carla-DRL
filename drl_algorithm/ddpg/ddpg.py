@@ -1,512 +1,357 @@
-"""
-*********************************************************************************************************
-*
-*	模块名称 : ddpg算法模块
-*	文件名称 : ddpg.py
-*	版    本 : V1.0.0
-*   作    者 ：fc
-*   日    期 ：2019/03/13
-*	说    明 :
-*             包含常用打印函数, ArgumentParser函数, gym Wrap类等:
-*
-* \par Method List:
-*    1.    normalize(x, stats);
-*    2.    denormalize(x, stats);
-*    3.    reduce_std(x, axis=None, keepdims=False);
-*    4.    reduce_var(x, axis=None, keepdims=False);
-*    5.    get_target_updates(vars, target_vars, tau);
-*    6.    get_perturbed_actor_updates(actor, perturbed_actor, param_noise_stddev);
-*
-* \par Class List:
-*    1.    DDPG
-*   修订记录：
-	2019-03-05：   1.0.0      build;
-
-	2019-03-13：   1.0.0      添加一些注释信息;
-
-    2019-03-15:    1.0.0      修改setup_critic_optimizer(), 使之适用自定义网络;
-
-*	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
-*
-*********************************************************************************************************
-"""
-from copy import copy
-from functools import reduce
-
+import os
+import gym
+import time
+import sys
 import numpy as np
 import tensorflow as tf
-import tensorflow.contrib as tc
+import tensorflow.contrib.layers as layers
 
-from baselines import logger
-from baselines.common.mpi_adam import MpiAdam
-import baselines.common.tf_util as U
-from baselines.common.mpi_running_mean_std import RunningMeanStd
-try:
-    from mpi4py import MPI
-except ImportError:
-    MPI = None
+from datetime import datetime
+from collections import deque
+from environment import carla_gym
+from utils.common import get_vars, count_vars
+from utils.replay_buffer import ReplayBuffer
+from utils import logger
+from utils.common import save_variables, load_variables
+from .noise import NormalActionNoise, AdaptiveParamNoiseSpec, OrnsteinUhlenbeckActionNoise
 
-def normalize(x, stats):
-    '''
+def base_network(x, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_layer_normal=True):
 
-    :param x:  input data
-    :param stats: the statistic data of input
-    :return: normalized input
-    '''
-    if stats is None:
-        return x
-    return (x - stats.mean) / stats.std
+    # out = tf.cast(x, dtype=tf.float32) / 255.0
+    out = x
+    out = layers.conv2d(out, 32, kernel_size=[8, 8], stride=4, padding='SAME', activation_fn=activation)
+    out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
+    if use_layer_normal:
+        out = layers.layer_norm(out, center=True, scale=True)
+    out = layers.conv2d(out, 64, kernel_size=[4, 4], stride=2, padding='SAME', activation_fn=activation)
+    out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
+    if use_layer_normal:
+        out = layers.layer_norm(out, center=True, scale=True)
+    out = layers.conv2d(out, 192, kernel_size=[3, 3], stride=1, padding='SAME', activation_fn=activation)
+    if use_layer_normal:
+        out = layers.layer_norm(out, center=True, scale=True)
+    reshape = tf.reshape(out, shape=[-1, out.get_shape()[1] * out.get_shape()[2] * 192])
+    out = layers.fully_connected(reshape, num_outputs=512, activation_fn=None)
+
+    out = layers.layer_norm(out, center=True, scale=True)
+    out = output_activation(out)
+    return out
+
+def actor_network(observations, num_actions, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_layer_normal=False):
+
+    x = base_network(observations, activation=activation, output_activation=output_activation, use_layer_normal=use_layer_normal)
+    x = layers.fully_connected(x, num_outputs=num_actions, activation_fn=None)
+    x = output_activation(x)
+    return x
+
+def critic_network(observations, actions, activation=tf.nn.relu, output_activation=tf.nn.relu, use_layer_normal=False):
+
+    x = base_network(observations, activation=activation, output_activation=output_activation, use_layer_normal=use_layer_normal)
+    # print("action shape: ", actions.get_shape().as_list())
+    x = tf.concat([x, actions], axis=-1)  # this assumes observation and action can be concatenated
+    x = layers.fully_connected(x, 64, activation_fn=None)
+    x = layers.layer_norm(x, center=True, scale=True)
+    x = activation(x)
+    x = layers.fully_connected(x, 1, activation_fn=None)
+    x = layers.layer_norm(x, center=True, scale=True)
+    x = output_activation(x)
+    return x
+
+def actor_critic_network(observations, actions, activation=tf.nn.tanh, output_activation=tf.nn.tanh):
+
+    num_actions = actions.shape.as_list()[-1]
+
+    with tf.variable_scope('pi'):
+        pi = actor_network(observations, num_actions, activation=activation, output_activation=output_activation)
+        # print(pi.op.name, pi.get_shape().as_list())
+    with tf.variable_scope('q'):
+        q = critic_network(observations, actions, activation=activation, output_activation=output_activation)
+        # print(q.op.name, q.get_shape().as_list())
+    with tf.variable_scope('q', reuse=True):
+        q_pi = critic_network(observations, pi, activation=activation, output_activation=output_activation)
+        # print(q_pi.op.name, q_pi.get_shape().as_list())
+    return pi, q, q_pi
+
+"""
+
+Deep Deterministic Policy Gradient (DDPG)
+
+"""
+def ddpg(env,
+         session=tf.get_default_session(),
+         seed=0,
+         use_action_noise=True,
+         use_param_noise=False,
+         noise_std=0.2,
+         replay_size=int(1e4),
+         gamma=0.99,
+         total_steps = 1000000,
+         steps_per_epoch=5000,
+         polyak=0.995,
+         pi_lr=1e-3,
+         q_lr=1e-3,
+         batch_size=100,
+         start_steps=10000,
+         max_each_epoch_len=1000,
+         save_freq=1,
+         model_file_load_path=None,
+         model_file_save_path=None
+         ):
+
+    tf.set_random_seed(seed)
+    np.random.seed(seed)
+
+    train_env, test_env = env, env
+    observation_shape = train_env.observation_space.shape
+    action_shape = train_env.action_space.shape
+    observation_range = (train_env.observation_space.low, train_env.observation_space.high)
+    action_range = (train_env.action_space.low, train_env.action_space.high)
+
+    # Action limit for clamping: critically, assumes all dimensions share the same bound!
+    number_actions = train_env.action_space.shape[-1]
+    assert (np.abs(train_env.action_space.low) == train_env.action_space.high).all()  # we assume symmetric actions.
+    max_action = train_env.action_space.high
+    logger.info('scaling actions by {} before executing in env'.format(max_action))
+
+    # Inputs to computation graph
+    obs0_ph = tf.placeholder(tf.float32, shape=(None,) + observation_shape, name='obs0')
+    obs1_ph = tf.placeholder(tf.float32, shape=(None,) + observation_shape, name='obs1')
+    done_ph = tf.placeholder(tf.float32, shape=(None, 1), name='done')
+    rewards_ph = tf.placeholder(tf.float32, shape=(None, 1), name='rewards')
+    actions_ph = tf.placeholder(tf.float32, shape=(None,) + action_shape, name='actions')
+
+    action_throttle_noise = None
+    action_steer_noise = None
+    param_noise = None
+    if use_action_noise:
+        # action_noise = NormalActionNoise(mu=np.zeros(number_actions), sigma=float(noise_std) * np.ones(number_actions))
+        action_throttle_noise = OrnsteinUhlenbeckActionNoise(mu=np.ones(number_actions-1)*0.5,
+                                                    sigma=float(noise_std) * np.ones(number_actions-1))
+        action_steer_noise_0 = OrnsteinUhlenbeckActionNoise(mu=np.ones(number_actions-1)*(-0.9),
+                                                    sigma=float(noise_std) * np.ones(number_actions-1))
+        action_steer_noise_1 = OrnsteinUhlenbeckActionNoise(mu=np.ones(number_actions-1)*(0.9),
+                                                    sigma=float(noise_std) * np.ones(number_actions-1))
+        action_steer_noise_2 = OrnsteinUhlenbeckActionNoise(mu=np.zeros(number_actions-1),
+                                                    sigma=float(noise_std) * np.ones(number_actions-1))
+    elif use_param_noise:
+        param_noise = AdaptiveParamNoiseSpec(initial_stddev=float(noise_std), desired_action_stddev=float(noise_std))
+    else:
+        logger.info("No specified noise......")
+
+    # Main outputs from computation graph
+    with tf.variable_scope('main'):
+        pi, q, q_pi = actor_critic_network(obs0_ph, actions_ph)
+
+    # Target networks
+    with tf.variable_scope('target'):
+        # Note that the action placeholder going to actor_critic here is
+        # irrelevant, because we only need q_targ(s, pi_targ(s)).
+        pi_targ, _, q_pi_targ = actor_critic_network(obs1_ph, actions_ph)
+
+    # Experience buffer
+    replay_buffer = ReplayBuffer(replay_size)
+
+    # Count variables
+    var_counts = tuple(count_vars(scope) for scope in ['main/pi', 'main/q', 'main'])
+    print('\nNumber of parameters: \t pi: %d, \t q: %d, \t total: %d\n' % var_counts)
+
+    # Bellman backup for Q function
+    target_q = tf.stop_gradient(rewards_ph + gamma * (1 - done_ph) * q_pi_targ)
+
+    # DDPG losses
+    pi_loss = -tf.reduce_mean(q_pi)
+    q_loss = tf.reduce_mean((q - target_q) ** 2)
+
+    # Separate train ops for pi, q
+    pi_optimizer = tf.train.AdamOptimizer(learning_rate=pi_lr)
+    q_optimizer = tf.train.AdamOptimizer(learning_rate=q_lr)
+
+    train_pi_op = pi_optimizer.minimize(pi_loss, var_list=get_vars('main/pi'))
+    train_q_op = q_optimizer.minimize(q_loss, var_list=get_vars('main/q'))
+
+    # Polyak averaging for target variables
+    target_update = tf.group([tf.assign(v_targ, polyak * v_targ + (1 - polyak) * v_main)
+                              for v_main, v_targ in zip(get_vars('main'), get_vars('target'))])
+
+    # Initializing targets to match main variables
+    target_init = tf.group([tf.assign(v_targ, v_main)
+                            for v_main, v_targ in zip(get_vars('main'), get_vars('target'))])
 
 
-def denormalize(x, stats):
-    if stats is None:
-        return x
-    return x * stats.std + stats.mean
-
-def reduce_std(x, axis=None, keepdims=False):
-    '''
-       返回按制定轴计算的标准差
-    :param x:
-    :param axis:
-    :param keepdims:
-    :return:
-    '''
-    return tf.sqrt(reduce_var(x, axis=axis, keepdims=keepdims))
-
-def reduce_var(x, axis=None, keepdims=False):
-    '''
-       返回按制定轴计算的均方差
-    :param x:
-    :param axis:
-    :param keepdims:
-    :return:
-    '''
-    m = tf.reduce_mean(x, axis=axis, keepdims=True)
-    devs_squared = tf.square(x - m)
-    return tf.reduce_mean(devs_squared, axis=axis, keepdims=keepdims)
-
-def get_target_updates(vars, target_vars, tau):
-    '''
-       用var更新target variables, 软更新参数为tau
-    :param vars:
-    :param target_vars:
-    :param tau:
-    :return:
-    '''
-    logger.info('setting up target updates ...')
-    soft_updates = []
-    init_updates = []
-    assert len(vars) == len(target_vars)
-    for var, target_var in zip(vars, target_vars):
-        logger.info('  {} <- {}'.format(target_var.name, var.name))
-        init_updates.append(tf.assign(target_var, var))
-        soft_updates.append(tf.assign(target_var, (1.0 - tau) * target_var + tau * var))
-    assert len(init_updates) == len(vars)
-    assert len(soft_updates) == len(vars)
-    return tf.group(*init_updates), tf.group(*soft_updates)
-
-def get_perturbed_actor_updates(actor, perturbed_actor, param_noise_stddev):
-    '''
-          用actor更新 perturbed actor网络的参数, param_noise的biaozhunc为param_noise_stddev
-    :param actor:
-    :param perturbed_actor:
-    :param param_noise_stddev:
-    :return:
-    '''
-    assert len(actor.vars) == len(perturbed_actor.vars)
-    assert len(actor.perturbable_vars) == len(perturbed_actor.perturbable_vars)
-
-    updates = []
-    for var, perturbed_var in zip(actor.vars, perturbed_actor.vars):
-        if var in actor.perturbable_vars:
-            logger.info('  {} <- {} + noise'.format(perturbed_var.name, var.name))
-            updates.append(tf.assign(perturbed_var, var + tf.random_normal(tf.shape(var), mean=0., stddev=param_noise_stddev)))
+    session.run(tf.global_variables_initializer())
+    # 如果存在模型文件则加载model
+    if model_file_load_path is not None:
+        if os.path.exists(model_file_load_path):
+            load_variables(model_file_load_path)
+            logger.log('Loaded model from {}'.format(model_file_load_path))
         else:
-            logger.info('  {} <- {}'.format(perturbed_var.name, var.name))
-            updates.append(tf.assign(perturbed_var, var))
-    assert len(updates) == len(actor.vars)
-    return tf.group(*updates)
+            logger.error("Cannont find your model file!")
 
+    session.run(target_init)
 
-class DDPG(object):
-    '''
-        ddpg description:
-                    1. 采用normalized_observation, 可选normalized_return;
-                    2. 创建 actor, critic, target_actor, target_critic四个网络;
-                    3. target_Q = target_critic(obs_t1, target_actor)
-                    4. 更新过程:
-                                a.根据MSE(采样动作的Q值 - target_Q)更新critic;
-                                b.根据 -actor输出动作的Q值 更新actor;
-                                c.根据polyak更新target actor, target critic;
+    # Setup model saving
+    # logger.setup_tf_saver(sess, inputs={'x': obs0_ph, 'a': actions_ph}, outputs={'pi': pi, 'q': q})
 
-    '''
-    def __init__(self, actor, critic, memory, observation_shape, action_shape, param_noise=None, action_noise=None,
-        gamma=0.99, tau=0.001, normalize_returns=False, enable_popart=False, normalize_observations=True,
-        batch_size=128, observation_range=(-5., 5.), action_range=(-1., 1.), return_range=(-np.inf, np.inf),
-        critic_l2_reg=0., actor_lr=1e-4, critic_lr=1e-3, clip_norm=None, reward_scale=1.):
-        # Inputs.
-        self.obs0 = tf.placeholder(tf.float32, shape=(None,) + observation_shape, name='obs0')
-        self.obs1 = tf.placeholder(tf.float32, shape=(None,) + observation_shape, name='obs1')
-        self.terminals1 = tf.placeholder(tf.float32, shape=(None, 1), name='terminals1')
-        self.rewards = tf.placeholder(tf.float32, shape=(None, 1), name='rewards')
-        self.actions = tf.placeholder(tf.float32, shape=(None,) + action_shape, name='actions')
-        self.critic_target = tf.placeholder(tf.float32, shape=(None, 1), name='critic_target')
-        self.param_noise_stddev = tf.placeholder(tf.float32, shape=(), name='param_noise_stddev')
+    each_epoch_rewards = 0   #每一epoch的累计reward
+    each_epoch_length = 0    #每一epoch的总步数
+    epoch_rewards = deque(maxlen=100)  #记录每一幕的累计回报
+    epoch_steps = deque(maxlen=100)  #记录每一幕的累计步数
+    epoch_actions = deque(maxlen=100)  #记录actor生成的action
+    epoch_qs = deque(maxlen=100)     #记录所有的q值
+    epoch_actor_losses = deque(maxlen=100)  #记录actor网络的损失值
+    epoch_critic_losses = deque(maxlen=100)  #记录critic网络的损失值
+    test_epoch_rewards = deque(maxlen=100)
+    test_epoch_steps = deque(maxlen=100)
+    saved_mean_reward = None
 
-        # Parameters.
-        self.gamma = gamma
-        self.tau = tau
-        self.memory = memory
-        self.normalize_observations = normalize_observations
-        self.normalize_returns = normalize_returns
-        self.action_noise = action_noise
-        self.param_noise = param_noise
-        self.action_range = action_range
-        self.return_range = return_range
-        self.observation_range = observation_range
-        self.critic = critic
-        self.actor = actor
-        self.actor_lr = actor_lr
-        self.critic_lr = critic_lr
-        self.clip_norm = clip_norm
-        self.enable_popart = enable_popart
-        self.reward_scale = reward_scale
-        self.batch_size = batch_size
-        self.stats_sample = None
-        self.critic_l2_reg = critic_l2_reg
+    start_time = time.time()
+    # we need to reset the environment twice because of the bug of Carla
+    observation = train_env.reset()
+    observation = train_env.reset_env()
 
-        # Observation normalization.
-        if self.normalize_observations:
-            with tf.variable_scope('obs_rms'):
-                self.obs_rms = RunningMeanStd(shape=observation_shape)
+    # 获取actor网络动作
+    AXIS_ROW = 0
+    THROTTLE_INDEX = 0
+    STEER_INDEX = 1
+    def get_action(observation, apply_noise=True):
+
+        actions = session.run(pi, feed_dict={obs0_ph: [observation]})
+        print("pi generated from actor: ", actions)
+        a = actions[0]
+        epoch_actions.append(a)
+        if action_throttle_noise is not None and apply_noise:
+            mean_action = np.mean(epoch_actions, axis=AXIS_ROW)
+            if mean_action[STEER_INDEX] < -0.5:
+                action_steer_noise = action_steer_noise_1
+            elif mean_action[STEER_INDEX] > 0.5:
+                action_steer_noise = action_steer_noise_0
+            else:
+                action_steer_noise = action_steer_noise_2
+            noise_throttle = action_throttle_noise()
+            noise_steer = action_steer_noise()
+            print("throttle noise: ", noise_throttle)
+            print("steer noise: ", noise_steer)
+            # assert noise.shape == a.shape
+            a[THROTTLE_INDEX] += noise_throttle
+            a[STEER_INDEX] += noise_steer
+        return np.clip(a, a_min=action_range[0], a_max=action_range[1])
+
+    # 在test_env中测试agent
+    def test_agent(n=10):
+        o = test_env.reset()
+        for j in range(n):
+            o, r, d, ep_ret, ep_len = test_env.reset_env(), 0, False, 0, 0
+            while not (d or (ep_len == max_each_epoch_len)):
+                # Take deterministic actions at test time (noise_scale=0)
+                o, r, d, _ = test_env.step(get_action(o, apply_noise=False))
+                ep_ret += r
+                ep_len += 1
+
+            test_epoch_rewards.append(ep_ret)
+            test_epoch_steps.append(ep_len)
+
+    epochs = total_steps // steps_per_epoch
+
+    # Main loop: collect experience in env and update/log each epoch
+    for step in range(total_steps):
+
+        """
+        Until start_steps have elapsed, randomly sample actions
+        from a uniform distribution for better exploration. Afterwards, 
+        use the learned policy (with some noise, via act_noise). 
+        """
+        if step > start_steps:
+            action = get_action(observation, apply_noise=True)
         else:
-            self.obs_rms = None
-        normalized_obs0 = tf.clip_by_value(normalize(self.obs0, self.obs_rms),
-            self.observation_range[0], self.observation_range[1])
-        normalized_obs1 = tf.clip_by_value(normalize(self.obs1, self.obs_rms),
-            self.observation_range[0], self.observation_range[1])
+            action = train_env.action_space.sample()
+            # action = np.random.random(size=number_actions)
+        # 记录每次的action
+        print("action = ", action)
 
-        # Return normalization.
-        if self.normalize_returns:
-            with tf.variable_scope('ret_rms'):
-                self.ret_rms = RunningMeanStd()
-        else:
-            self.ret_rms = None
+        # Step the env
+        observation2, reward, done, _ = train_env.step(action)
+        each_epoch_rewards += reward
+        each_epoch_length += 1
 
-        # Create target networks.
-        target_actor = copy(actor)
-        target_actor.name = 'target_actor'
-        self.target_actor = target_actor
-        target_critic = copy(critic)
-        target_critic.name = 'target_critic'
-        self.target_critic = target_critic
+        # Ignore the "done" signal if it comes from hitting the time
+        # horizon (that is, when it's an artificial terminal signal
+        # that isn't based on the agent's state)
+        done = False if each_epoch_length == max_each_epoch_len else done
 
-        # Create networks and core TF parts that are shared across setup parts.
-        # actor网络得到的action
-        self.actor_tf = actor(normalized_obs0)
-        # 采样的actions的Q值
-        self.normalized_critic_tf = critic(normalized_obs0, self.actions)
-        self.critic_tf = denormalize(tf.clip_by_value(self.normalized_critic_tf, self.return_range[0], self.return_range[1]), self.ret_rms)
-        # actor网络输出的动作的Q值
-        self.normalized_critic_with_actor_tf = critic(normalized_obs0, self.actor_tf, reuse=True)
-        self.critic_with_actor_tf = denormalize(tf.clip_by_value(self.normalized_critic_with_actor_tf, self.return_range[0], self.return_range[1]), self.ret_rms)
-        # 前向target网络计算target_Q
-        Q_obs1 = denormalize(target_critic(normalized_obs1, target_actor(normalized_obs1)), self.ret_rms)
-        self.target_Q = self.rewards + (1. - self.terminals1) * gamma * Q_obs1
+        # Store experience to replay buffer
+        replay_buffer.add(observation, action, reward, observation2, done)
 
-        # Set up parts.
-        if self.param_noise is not None:
-            self.setup_param_noise(normalized_obs0)
+        # Super critical, easy to overlook step: make sure to update
+        # most recent observation!
+        observation = observation2
 
-        # 将actor网络的loss设为 -critic_with_actor_tf
-        self.setup_actor_optimizer()
+        # 在每次运动轨迹结束或者到达 steps == max_each_epoch_len时进行DDPG网络更新
+        if done or (each_epoch_length == max_each_epoch_len):
 
-        # critic网络的loss设为 MSE（normalized_critic_tf - target_Q）
-        self.setup_critic_optimizer()
-        if self.normalize_returns and self.enable_popart:
-            self.setup_popart()
+            for _ in range(each_epoch_length):
+                batch_obs0, batch_actions, batch_rewards, batch_obs1, batch_done = replay_buffer.sample(batch_size)
+                feed_dict = {obs0_ph: batch_obs0,
+                             obs1_ph: batch_obs1,
+                             actions_ph: batch_actions,
+                             rewards_ph: batch_rewards,
+                             done_ph: batch_done.astype('float32')
+                             }
 
+                # Q-learning update
+                Q_loss, Q_value, Q_pi, _ = session.run([q_loss, q, q_pi, train_q_op], feed_dict)
+                # print("Q value: ", Q_value)
+                # print("Q value of pi: ", Q_pi)
+                epoch_critic_losses.append(Q_loss)
+                epoch_qs.append(Q_value)
 
-        self.setup_stats()
-        self.setup_target_network_updates()
+                # Policy update
+                PI_loss, _, _ = session.run([pi_loss, train_pi_op, target_update], feed_dict)
+                epoch_actor_losses.append(PI_loss)
 
-        self.initial_state = None # recurrent architectures not supported yet
+            # 记录每个epoch的累计回报和总步数
+            epoch_rewards.append(each_epoch_rewards)
+            epoch_steps.append(each_epoch_length)
+            each_epoch_rewards = 0
+            each_epoch_length = 0
 
-    def setup_target_network_updates(self):
-        actor_init_updates, actor_soft_updates = get_target_updates(self.actor.vars, self.target_actor.vars, self.tau)
-        critic_init_updates, critic_soft_updates = get_target_updates(self.critic.vars, self.target_critic.vars, self.tau)
-        self.target_init_updates = [actor_init_updates, critic_init_updates]
-        self.target_soft_updates = [actor_soft_updates, critic_soft_updates]
+            observation = train_env.reset_env()
 
-    def setup_param_noise(self, normalized_obs0):
-        assert self.param_noise is not None
+        # End of epoch wrap-up
+        if step > 0 and step % steps_per_epoch == 0:
+            epoch = step // steps_per_epoch
 
-        # Configure perturbed actor.
-        param_noise_actor = copy(self.actor)
-        param_noise_actor.name = 'param_noise_actor'
-        self.perturbed_actor_tf = param_noise_actor(normalized_obs0)
-        logger.info('setting up param noise')
-        self.perturb_policy_ops = get_perturbed_actor_updates(self.actor, param_noise_actor, self.param_noise_stddev)
+            # Test the performance of the deterministic version of the agent.
+            test_agent()
+            
+            mean_100ep_reward = np.mean(epoch_rewards)
+            mean_100ep_steps = np.mean(epoch_steps)
+            test_ep_reward = np.mean(test_epoch_rewards)
+            test_ep_steps = np.mean(test_epoch_steps)
+            mean_actor_loss = np.mean(epoch_actor_losses)
+            mean_critic_loss = np.mean(epoch_critic_losses)
+            mean_q_value = np.mean(epoch_qs)
+            duration = time.time() - start_time
 
-        # Configure separate copy for stddev adoption.
-        adaptive_param_noise_actor = copy(self.actor)
-        adaptive_param_noise_actor.name = 'adaptive_param_noise_actor'
-        adaptive_actor_tf = adaptive_param_noise_actor(normalized_obs0)
-        self.perturb_adaptive_policy_ops = get_perturbed_actor_updates(self.actor, adaptive_param_noise_actor, self.param_noise_stddev)
-        self.adaptive_policy_distance = tf.sqrt(tf.reduce_mean(tf.square(self.actor_tf - adaptive_actor_tf)))
+            # Save model
+            if (epoch % save_freq == 0) or (epoch == epochs - 1):
+                if (saved_mean_reward is None or test_ep_reward > saved_mean_reward):
+                    logger.log("Saving model due to mean reward increase: {} -> {}".format(saved_mean_reward, test_ep_reward))
+                    save_variables(model_file_save_path)
+                    saved_mean_reward = test_ep_reward
 
-    def setup_actor_optimizer(self):
-        logger.info('setting up actor optimizer')
-        self.actor_loss = -tf.reduce_mean(self.critic_with_actor_tf)
-        actor_shapes = [var.get_shape().as_list() for var in self.actor.trainable_vars]
-        actor_nb_params = sum([reduce(lambda x, y: x * y, shape) for shape in actor_shapes])
-        logger.info('  actor shapes: {}'.format(actor_shapes))
-        logger.info('  actor params: {}'.format(actor_nb_params))
-        self.actor_grads = U.flatgrad(self.actor_loss, self.actor.trainable_vars, clip_norm=self.clip_norm)
-        self.actor_optimizer = MpiAdam(var_list=self.actor.trainable_vars,
-            beta1=0.9, beta2=0.999, epsilon=1e-08)
+            # Log info about epoch
+            logger.record_tabular("epoch", epoch)
+            logger.record_tabular("mean_epoch_rewards", mean_100ep_reward)
+            logger.record_tabular("mean_epoch_steps", mean_100ep_steps)
+            logger.record_tabular("test_epoch_rewards", test_ep_reward)
+            logger.record_tabular("test_epoch_steps", test_ep_steps)
+            logger.record_tabular("mean_actor_loss", mean_actor_loss)
+            logger.record_tabular("mean_critic_loss", mean_critic_loss)
+            logger.record_tabular("mean_q_value", mean_q_value)
+            logger.record_tabular("total_steps", step)
+            logger.record_tabular('duration', duration)
+            logger.dump_tabular()
 
-    def setup_critic_optimizer(self):
-        logger.info('setting up critic optimizer')
-        normalized_critic_target_tf = tf.clip_by_value(normalize(self.critic_target, self.ret_rms), self.return_range[0], self.return_range[1])
-        self.critic_loss = tf.reduce_mean(tf.square(self.normalized_critic_tf - normalized_critic_target_tf))
-        if self.critic_l2_reg > 0.:
-            critic_reg_vars = [var for var in self.critic.trainable_vars if var.name.endswith('/weights:0') and 'output' not in var.name]
-            for var in critic_reg_vars:
-                logger.info('  regularizing: {}'.format(var.name))
-            logger.info('  applying l2 regularization with {}'.format(self.critic_l2_reg))
-            critic_reg = tc.layers.apply_regularization(
-                regularizer=tc.layers.l2_regularizer(self.critic_l2_reg),
-                weights_list=critic_reg_vars
-            )
-            self.critic_loss += critic_reg
-        critic_shapes = [var.get_shape().as_list() for var in self.critic.trainable_vars]
-        critic_nb_params = sum([reduce(lambda x, y: x * y, shape) for shape in critic_shapes])
-        logger.info('  critic shapes: {}'.format(critic_shapes))
-        logger.info('  critic params: {}'.format(critic_nb_params))
-        self.critic_grads = U.flatgrad(self.critic_loss, self.critic.trainable_vars, clip_norm=self.clip_norm)
-        self.critic_optimizer = MpiAdam(var_list=self.critic.trainable_vars,
-            beta1=0.9, beta2=0.999, epsilon=1e-08)
-
-    def setup_popart(self):
-        # See https://arxiv.org/pdf/1602.07714.pdf for details.
-        self.old_std = tf.placeholder(tf.float32, shape=[1], name='old_std')
-        new_std = self.ret_rms.std
-        self.old_mean = tf.placeholder(tf.float32, shape=[1], name='old_mean')
-        new_mean = self.ret_rms.mean
-
-        self.renormalize_Q_outputs_op = []
-        for vs in [self.critic.output_vars, self.target_critic.output_vars]:
-            assert len(vs) == 2
-            M, b = vs
-            assert 'kernel' in M.name
-            assert 'bias' in b.name
-            assert M.get_shape()[-1] == 1
-            assert b.get_shape()[-1] == 1
-            self.renormalize_Q_outputs_op += [M.assign(M * self.old_std / new_std)]
-            self.renormalize_Q_outputs_op += [b.assign((b * self.old_std + self.old_mean - new_mean) / new_std)]
-
-    def setup_stats(self):
-        '''
-           建立起 DDPG 算法相关的统计特征
-        :return:
-        '''
-        ops = []
-        names = []
-
-        if self.normalize_returns:
-            ops += [self.ret_rms.mean, self.ret_rms.std]
-            names += ['ret_rms_mean', 'ret_rms_std']
-
-        if self.normalize_observations:
-            ops += [tf.reduce_mean(self.obs_rms.mean), tf.reduce_mean(self.obs_rms.std)]
-            names += ['obs_rms_mean', 'obs_rms_std']
-
-        ops += [tf.reduce_mean(self.critic_tf)]
-        names += ['reference_Q_mean']
-        ops += [reduce_std(self.critic_tf)]
-        names += ['reference_Q_std']
-
-        ops += [tf.reduce_mean(self.critic_with_actor_tf)]
-        names += ['reference_actor_Q_mean']
-        ops += [reduce_std(self.critic_with_actor_tf)]
-        names += ['reference_actor_Q_std']
-
-        ops += [tf.reduce_mean(self.actor_tf)]
-        names += ['reference_action_mean']
-        ops += [reduce_std(self.actor_tf)]
-        names += ['reference_action_std']
-
-        if self.param_noise:
-            ops += [tf.reduce_mean(self.perturbed_actor_tf)]
-            names += ['reference_perturbed_action_mean']
-            ops += [reduce_std(self.perturbed_actor_tf)]
-            names += ['reference_perturbed_action_std']
-
-        self.stats_ops = ops
-        self.stats_names = names
-
-    def step(self, obs, apply_noise=True, compute_Q=True):
-        if self.param_noise is not None and apply_noise:
-            actor_tf = self.perturbed_actor_tf
-        else:
-            actor_tf = self.actor_tf
-        feed_dict = {self.obs0: U.adjust_shape(self.obs0, [obs])}
-        if compute_Q:
-            action, q = self.sess.run([actor_tf, self.critic_with_actor_tf], feed_dict=feed_dict)
-        else:
-            action = self.sess.run(actor_tf, feed_dict=feed_dict)
-            q = None
-
-        if self.action_noise is not None and apply_noise:
-            noise = self.action_noise()
-            assert noise.shape == action[0].shape
-            action += noise
-        action = np.clip(action, self.action_range[0], self.action_range[1])
+    return get_action
 
 
-        return action, q, None, None
-
-    def store_transition(self, obs0, action, reward, obs1, terminal1):
-        '''
-              保存经历数据
-        :param obs0: t时刻的observation
-        :param action:  t时刻的action
-        :param reward:  t时刻的reward
-        :param obs1:    t+1时刻的observation
-        :param terminal1: t时刻的terminal/done
-        :return:
-        '''
-        reward *= self.reward_scale
-        # 防止启动多个仿真环境异步训练, 这样写可以区分不同环境收集到的数据
-        num_envs = obs0.shape[0]
-        for b in range(num_envs):
-            self.memory.add(obs0[b], action[b], reward[b], obs1[b], terminal1[b])
-            if self.normalize_observations:
-                self.obs_rms.update(np.array([obs0[b]]))
-
-    def train(self):
-        # Get a batch.
-        batch_obs0, batch_actions, batch_rewards, batch_obs1, batch_terminals0 = self.memory.sample(batch_size=self.batch_size)
-
-        if self.normalize_returns and self.enable_popart:
-            old_mean, old_std, target_Q = self.sess.run([self.ret_rms.mean, self.ret_rms.std, self.target_Q], feed_dict={
-                self.obs1: batch_obs1,
-                self.rewards: batch_rewards,
-                self.terminals1: batch_terminals0.astype('float32'),
-            })
-            self.ret_rms.update(target_Q.flatten())
-            self.sess.run(self.renormalize_Q_outputs_op, feed_dict={
-                self.old_std : np.array([old_std]),
-                self.old_mean : np.array([old_mean]),
-            })
-
-            # Run sanity check. Disabled by default since it slows down things considerably.
-            # print('running sanity check')
-            # target_Q_new, new_mean, new_std = self.sess.run([self.target_Q, self.ret_rms.mean, self.ret_rms.std], feed_dict={
-            #     self.obs1: batch['obs1'],
-            #     self.rewards: batch['rewards'],
-            #     self.terminals1: batch['terminals1'].astype('float32'),
-            # })
-            # print(target_Q_new, target_Q, new_mean, new_std)
-            # assert (np.abs(target_Q - target_Q_new) < 1e-3).all()
-        else:
-            target_Q = self.sess.run(self.target_Q, feed_dict={
-                self.obs1: batch_obs1,
-                self.rewards: batch_rewards,
-                self.terminals1: batch_terminals0.astype('float32'),
-            })
-
-        # Get all gradients and perform a synced update.
-        ops = [self.actor_grads, self.actor_loss, self.critic_grads, self.critic_loss]
-        actor_grads, actor_loss, critic_grads, critic_loss = self.sess.run(ops, feed_dict={
-            self.obs0: batch_obs0,
-            self.actions: batch_actions,
-            self.critic_target: target_Q,
-        })
-        self.actor_optimizer.update(actor_grads, stepsize=self.actor_lr)
-        self.critic_optimizer.update(critic_grads, stepsize=self.critic_lr)
-
-        return critic_loss, actor_loss
-
-    def initialize(self, sess):
-        self.sess = sess
-        self.sess.run(tf.global_variables_initializer())
-        self.actor_optimizer.sync()
-        self.critic_optimizer.sync()
-        self.sess.run(self.target_init_updates)
-
-    def update_target_net(self):
-        self.sess.run(self.target_soft_updates)
-
-    def get_stats(self):
-        if self.stats_sample is None:
-            # Get a sample and keep that fixed for all further computations.
-            # This allows us to estimate the change in value for the same set of inputs.
-            self.stats_sample = self.memory.sample(batch_size=self.batch_size)
-        sample_obs0, sample_actions, _, _, _ = self.stats_sample
-        values = self.sess.run(self.stats_ops, feed_dict={
-            self.obs0: sample_obs0,
-            self.actions: sample_actions,
-        })
-
-        names = self.stats_names[:]
-        assert len(names) == len(values)
-        stats = dict(zip(names, values))
-
-        if self.param_noise is not None:
-            stats = {**stats, **self.param_noise.get_stats()}
-
-        return stats
-
-    def adapt_param_noise(self):
-        '''
-            更新adaptive_perturbed_actor的标准差, 根据distance规则更新
-            distance定义为adaptive_perturb_actor与actor的平方差,
-            得到distance后再用distance更新 param_noise的标准差
-        :return:
-        '''
-        try:
-            from mpi4py import MPI
-        except ImportError:
-            MPI = None
-
-        if self.param_noise is None:
-            return 0.
-
-        # Perturb a separate copy of the policy to adjust the scale for the next "real" perturbation.
-        batch_obs0,_,_,_,_ = self.memory.sample(batch_size=self.batch_size)
-        self.sess.run(self.perturb_adaptive_policy_ops, feed_dict={
-            self.param_noise_stddev: self.param_noise.current_stddev,
-        })
-        distance = self.sess.run(self.adaptive_policy_distance, feed_dict={
-            self.obs0: batch_obs0,
-            self.param_noise_stddev: self.param_noise.current_stddev,
-        })
-
-        if MPI is not None:
-            mean_distance = MPI.COMM_WORLD.allreduce(distance, op=MPI.SUM) / MPI.COMM_WORLD.Get_size()
-        else:
-            mean_distance = distance
-
-        if MPI is not None:
-            mean_distance = MPI.COMM_WORLD.allreduce(distance, op=MPI.SUM) / MPI.COMM_WORLD.Get_size()
-        else:
-            mean_distance = distance
-
-        self.param_noise.adapt(mean_distance)
-        return mean_distance
-
-    def reset(self):
-        '''
-            reset action_noise和param_noise;
-            perturbed_actor根据param_noise当前标准差重置, 重置后后在整个episode中都不变,
-        :return:
-        '''
-        # Reset internal state after an episode is complete.
-        if self.action_noise is not None:
-            self.action_noise.reset()
-        if self.param_noise is not None:
-            self.sess.run(self.perturb_policy_ops, feed_dict={
-                self.param_noise_stddev: self.param_noise.current_stddev,
-            })
