@@ -1,0 +1,245 @@
+Logging to logs/openai-2019-03-29-20-00-47-340870
+scaling actions by [1. 1.] before executing in env
+Saving model due to mean reward increase: None -> -1.3974375344276464
+------------------------------------
+| duration           | 567         |
+| epoch              | 1           |
+| mean_actor_loss    | 0.92155564  |
+| mean_critic_loss   | 0.20903583  |
+| mean_epoch_rewards | -12.7       |
+| mean_epoch_steps   | 131         |
+| mean_q_value       | -0.92129326 |
+| test_epoch_rewards | -1.4        |
+| test_epoch_steps   | 124         |
+| total_steps        | 5000        |
+------------------------------------
+Saving model due to mean reward increase: -1.3974375344276464 -> -0.3793509216129807
+-----------------------------------
+| duration           | 1.15e+03   |
+| epoch              | 2          |
+| mean_actor_loss    | 0.9967234  |
+| mean_critic_loss   | 0.2569932  |
+| mean_epoch_rewards | -15.6      |
+| mean_epoch_steps   | 122        |
+| mean_q_value       | -0.9967191 |
+| test_epoch_rewards | -0.379     |
+| test_epoch_steps   | 127        |
+| total_steps        | 10000      |
+-----------------------------------
+-----------------------------------
+| duration           | 1.73e+03   |
+| epoch              | 3          |
+| mean_actor_loss    | 0.9997152  |
+| mean_critic_loss   | 0.25327718 |
+| mean_epoch_rewards | -17.2      |
+| mean_epoch_steps   | 116        |
+| mean_q_value       | -0.9997153 |
+| test_epoch_rewards | -0.675     |
+| test_epoch_steps   | 127        |
+| total_steps        | 15000      |
+-----------------------------------
+Saving model due to mean reward increase: -0.3793509216129807 -> -0.3592640002459312
+------------------------------------
+| duration           | 2.3e+03     |
+| epoch              | 4           |
+| mean_actor_loss    | 0.9999742   |
+| mean_critic_loss   | 0.30295137  |
+| mean_epoch_rewards | -15.5       |
+| mean_epoch_steps   | 115         |
+| mean_q_value       | -0.99997413 |
+| test_epoch_rewards | -0.359      |
+| test_epoch_steps   | 128         |
+| total_steps        | 20000       |
+------------------------------------
+------------------------------------
+| duration           | 2.88e+03    |
+| epoch              | 5           |
+| mean_actor_loss    | 0.9999974   |
+| mean_critic_loss   | 0.30210137  |
+| mean_epoch_rewards | -15.6       |
+| mean_epoch_steps   | 116         |
+| mean_q_value       | -0.99999726 |
+| test_epoch_rewards | -0.518      |
+| test_epoch_steps   | 128         |
+| total_steps        | 25000       |
+------------------------------------
+-----------------------------------
+| duration           | 3.45e+03   |
+| epoch              | 6          |
+| mean_actor_loss    | 0.99999994 |
+| mean_critic_loss   | 0.27371505 |
+| mean_epoch_rewards | -14.8      |
+| mean_epoch_steps   | 116        |
+| mean_q_value       | -0.9999999 |
+| test_epoch_rewards | -0.575     |
+| test_epoch_steps   | 128        |
+| total_steps        | 30000      |
+-----------------------------------
+-----------------------------------
+| duration           | 4.02e+03   |
+| epoch              | 7          |
+| mean_actor_loss    | 1.0        |
+| mean_critic_loss   | 0.30469093 |
+| mean_epoch_rewards | -13.5      |
+| mean_epoch_steps   | 120        |
+| mean_q_value       | -1.0       |
+| test_epoch_rewards | -0.888     |
+| test_epoch_steps   | 128        |
+| total_steps        | 35000      |
+-----------------------------------
+-----------------------------------
+| duration           | 4.6e+03    |
+| epoch              | 8          |
+| mean_actor_loss    | 1.0        |
+| mean_critic_loss   | 0.30746344 |
+| mean_epoch_rewards | -12.5      |
+| mean_epoch_steps   | 121        |
+| mean_q_value       | -1.0       |
+| test_epoch_rewards | -0.771     |
+| test_epoch_steps   | 128        |
+| total_steps        | 40000      |
+-----------------------------------
+-----------------------------------
+| duration           | 5.18e+03   |
+| epoch              | 9          |
+| mean_actor_loss    | 1.0        |
+| mean_critic_loss   | 0.27084693 |
+| mean_epoch_rewards | -13.1      |
+| mean_epoch_steps   | 116        |
+| mean_q_value       | -1.0       |
+| test_epoch_rewards | -0.834     |
+| test_epoch_steps   | 128        |
+| total_steps        | 45000      |
+-----------------------------------
+-----------------------------------
+| duration           | 5.75e+03   |
+| epoch              | 10         |
+| mean_actor_loss    | 1.0        |
+| mean_critic_loss   | 0.28588313 |
+| mean_epoch_rewards | -12.5      |
+| mean_epoch_steps   | 117        |
+| mean_q_value       | -1.0       |
+| test_epoch_rewards | -0.741     |
+| test_epoch_steps   | 128        |
+| total_steps        | 50000      |
+-----------------------------------
+-----------------------------------
+| duration           | 6.33e+03   |
+| epoch              | 11         |
+| mean_actor_loss    | 1.0        |
+| mean_critic_loss   | 0.29934102 |
+| mean_epoch_rewards | -12.8      |
+| mean_epoch_steps   | 119        |
+| mean_q_value       | -1.0       |
+| test_epoch_rewards | -0.643     |
+| test_epoch_steps   | 129        |
+| total_steps        | 55000      |
+-----------------------------------
+----------------------------------
+| duration           | 6.89e+03  |
+| epoch              | 12        |
+| mean_actor_loss    | 1.0       |
+| mean_critic_loss   | 0.3341188 |
+| mean_epoch_rewards | -14.5     |
+| mean_epoch_steps   | 123       |
+| mean_q_value       | -1.0      |
+| test_epoch_rewards | -0.733    |
+| test_epoch_steps   | 129       |
+| total_steps        | 60000     |
+----------------------------------
+-----------------------------------
+| duration           | 7.46e+03   |
+| epoch              | 13         |
+| mean_actor_loss    | 1.0        |
+| mean_critic_loss   | 0.30381468 |
+| mean_epoch_rewards | -13.5      |
+| mean_epoch_steps   | 123        |
+| mean_q_value       | -1.0       |
+| test_epoch_rewards | -0.735     |
+| test_epoch_steps   | 129        |
+| total_steps        | 65000      |
+-----------------------------------
+-----------------------------------
+| duration           | 8.03e+03   |
+| epoch              | 14         |
+| mean_actor_loss    | 1.0        |
+| mean_critic_loss   | 0.32970104 |
+| mean_epoch_rewards | -12.3      |
+| mean_epoch_steps   | 121        |
+| mean_q_value       | -1.0       |
+| test_epoch_rewards | -1.09      |
+| test_epoch_steps   | 129        |
+| total_steps        | 70000      |
+-----------------------------------
+-----------------------------------
+| duration           | 8.62e+03   |
+| epoch              | 15         |
+| mean_actor_loss    | 1.0        |
+| mean_critic_loss   | 0.33575258 |
+| mean_epoch_rewards | -13.3      |
+| mean_epoch_steps   | 117        |
+| mean_q_value       | -1.0       |
+| test_epoch_rewards | -1.05      |
+| test_epoch_steps   | 129        |
+| total_steps        | 75000      |
+-----------------------------------
+-----------------------------------
+| duration           | 9.2e+03    |
+| epoch              | 16         |
+| mean_actor_loss    | 1.0        |
+| mean_critic_loss   | 0.36225182 |
+| mean_epoch_rewards | -14.3      |
+| mean_epoch_steps   | 116        |
+| mean_q_value       | -1.0       |
+| test_epoch_rewards | -1.26      |
+| test_epoch_steps   | 128        |
+| total_steps        | 80000      |
+-----------------------------------
+-----------------------------------
+| duration           | 9.78e+03   |
+| epoch              | 17         |
+| mean_actor_loss    | 1.0        |
+| mean_critic_loss   | 0.34241557 |
+| mean_epoch_rewards | -14.1      |
+| mean_epoch_steps   | 116        |
+| mean_q_value       | -1.0       |
+| test_epoch_rewards | -0.986     |
+| test_epoch_steps   | 128        |
+| total_steps        | 85000      |
+-----------------------------------
+-----------------------------------
+| duration           | 1.03e+04   |
+| epoch              | 18         |
+| mean_actor_loss    | 1.0        |
+| mean_critic_loss   | 0.34722236 |
+| mean_epoch_rewards | -15        |
+| mean_epoch_steps   | 117        |
+| mean_q_value       | -1.0       |
+| test_epoch_rewards | -0.957     |
+| test_epoch_steps   | 128        |
+| total_steps        | 90000      |
+-----------------------------------
+-----------------------------------
+| duration           | 1.09e+04   |
+| epoch              | 19         |
+| mean_actor_loss    | 1.0        |
+| mean_critic_loss   | 0.30031216 |
+| mean_epoch_rewards | -14.4      |
+| mean_epoch_steps   | 118        |
+| mean_q_value       | -1.0       |
+| test_epoch_rewards | -1.1       |
+| test_epoch_steps   | 128        |
+| total_steps        | 95000      |
+-----------------------------------
+-----------------------------------
+| duration           | 1.15e+04   |
+| epoch              | 20         |
+| mean_actor_loss    | 1.0        |
+| mean_critic_loss   | 0.30272397 |
+| mean_epoch_rewards | -16.8      |
+| mean_epoch_steps   | 116        |
+| mean_q_value       | -1.0       |
+| test_epoch_rewards | -1.33      |
+| test_epoch_steps   | 128        |
+| total_steps        | 100000     |
+-----------------------------------

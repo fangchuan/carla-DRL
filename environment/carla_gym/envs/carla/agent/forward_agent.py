@@ -1,6 +1,6 @@
 
-from .agent import Agent
-from ..client import VehicleControl
+from carla.agent.agent import Agent
+from carla.client import VehicleControl
 
 
 class ForwardAgent(Agent):

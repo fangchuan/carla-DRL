@@ -82,6 +82,7 @@ def ddpg(env,
          seed=0,
          use_action_noise=True,
          use_param_noise=False,
+         use_non_zero_terminal_state = False,
          noise_std=0.2,
          replay_size=int(1e4),
          gamma=0.99,
@@ -120,19 +121,21 @@ def ddpg(env,
     rewards_ph = tf.placeholder(tf.float32, shape=(None, 1), name='rewards')
     actions_ph = tf.placeholder(tf.float32, shape=(None,) + action_shape, name='actions')
 
-    action_throttle_noise = None
-    action_steer_noise = None
+    # action_throttle_noise = None
+    # action_steer_noise = None
+    action_noise = None
     param_noise = None
     if use_action_noise:
-        # action_noise = NormalActionNoise(mu=np.zeros(number_actions), sigma=float(noise_std) * np.ones(number_actions))
-        action_throttle_noise = OrnsteinUhlenbeckActionNoise(mu=np.ones(number_actions-1)*0.5,
-                                                    sigma=float(noise_std) * np.ones(number_actions-1))
-        action_steer_noise_0 = OrnsteinUhlenbeckActionNoise(mu=np.ones(number_actions-1)*(-0.9),
-                                                    sigma=float(noise_std) * np.ones(number_actions-1))
-        action_steer_noise_1 = OrnsteinUhlenbeckActionNoise(mu=np.ones(number_actions-1)*(0.9),
-                                                    sigma=float(noise_std) * np.ones(number_actions-1))
-        action_steer_noise_2 = OrnsteinUhlenbeckActionNoise(mu=np.zeros(number_actions-1),
-                                                    sigma=float(noise_std) * np.ones(number_actions-1))
+        action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(number_actions),
+                                                    sigma=float(noise_std) * np.ones(number_actions))
+        # action_throttle_noise = OrnsteinUhlenbeckActionNoise(mu=np.ones(number_actions-1)*0.5,
+        #                                             sigma=float(noise_std) * np.ones(number_actions-1))
+        # action_steer_noise_0 = OrnsteinUhlenbeckActionNoise(mu=np.ones(number_actions-1)*(-0.9),
+        #                                             sigma=float(noise_std) * np.ones(number_actions-1))
+        # action_steer_noise_1 = OrnsteinUhlenbeckActionNoise(mu=np.ones(number_actions-1)*(0.9),
+        #                                             sigma=float(noise_std) * np.ones(number_actions-1))
+        # action_steer_noise_2 = OrnsteinUhlenbeckActionNoise(mu=np.zeros(number_actions-1),
+        #                                             sigma=float(noise_std) * np.ones(number_actions-1))
     elif use_param_noise:
         param_noise = AdaptiveParamNoiseSpec(initial_stddev=float(noise_std), desired_action_stddev=float(noise_std))
     else:
@@ -156,11 +159,16 @@ def ddpg(env,
     print('\nNumber of parameters: \t pi: %d, \t q: %d, \t total: %d\n' % var_counts)
 
     # Bellman backup for Q function
-    target_q = tf.stop_gradient(rewards_ph + gamma * (1 - done_ph) * q_pi_targ)
+    if use_non_zero_terminal_state:
+        target_q = tf.stop_gradient(rewards_ph + gamma * q_pi_targ)
+    else:
+        target_q = tf.stop_gradient(rewards_ph + gamma * (1 - done_ph) * q_pi_targ)
 
     # DDPG losses
     pi_loss = -tf.reduce_mean(q_pi)
-    q_loss = tf.reduce_mean((q - target_q) ** 2)
+    td_error = q - target_q
+    from utils.common import huber_loss
+    q_loss = tf.reduce_mean( huber_loss(td_error) )
 
     # Separate train ops for pi, q
     pi_optimizer = tf.train.AdamOptimizer(learning_rate=pi_lr)
@@ -219,21 +227,24 @@ def ddpg(env,
         print("pi generated from actor: ", actions)
         a = actions[0]
         epoch_actions.append(a)
-        if action_throttle_noise is not None and apply_noise:
-            mean_action = np.mean(epoch_actions, axis=AXIS_ROW)
-            if mean_action[STEER_INDEX] < -0.5:
-                action_steer_noise = action_steer_noise_1
-            elif mean_action[STEER_INDEX] > 0.5:
-                action_steer_noise = action_steer_noise_0
-            else:
-                action_steer_noise = action_steer_noise_2
-            noise_throttle = action_throttle_noise()
-            noise_steer = action_steer_noise()
-            print("throttle noise: ", noise_throttle)
-            print("steer noise: ", noise_steer)
-            # assert noise.shape == a.shape
-            a[THROTTLE_INDEX] += noise_throttle
-            a[STEER_INDEX] += noise_steer
+        if action_noise is not None and apply_noise:
+            # mean_action = np.mean(epoch_actions, axis=AXIS_ROW)
+            # if mean_action[STEER_INDEX] < -0.5:
+            #     action_steer_noise = action_steer_noise_1
+            # elif mean_action[STEER_INDEX] > 0.5:
+            #     action_steer_noise = action_steer_noise_0
+            # else:
+            #     action_steer_noise = action_steer_noise_2
+            # noise_throttle = action_throttle_noise()
+            # noise_steer = action_steer_noise()
+            # print("throttle noise: ", noise_throttle)
+            # print("steer noise: ", noise_steer)
+            # a[THROTTLE_INDEX] += noise_throttle
+            # a[STEER_INDEX] += noise_steer
+            noise = action_noise()
+            assert noise.shape == a.shape
+            a += noise
+
         return np.clip(a, a_min=action_range[0], a_max=action_range[1])
 
     # 在test_env中测试agent

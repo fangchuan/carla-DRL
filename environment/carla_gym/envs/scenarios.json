@@ -24,8 +24,8 @@
     "city": "Town01",
     "start_pos_id": 36,
     "end_pos_id": 40,
-    "num_vehicles": 25,
-    "num_pedestrians": 15,
+    "num_vehicles": 95,
+    "num_pedestrians": 95,
     "weather_distribution": [1],
     "max_steps": 200
   },

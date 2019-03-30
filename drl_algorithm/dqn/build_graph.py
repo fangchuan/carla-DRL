@@ -252,8 +252,18 @@ def build_act_with_param_noise(make_obs_ph, q_func, num_actions, scope="deepq", 
         return act
 
 
-def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=None, gamma=1.0,
-    double_q=True, scope="deepq", reuse=None, param_noise=False, param_noise_filter_func=None):
+def build_train(make_obs_ph, 
+                q_func, 
+                num_actions, 
+                optimizer, 
+                grad_norm_clipping=None, 
+                gamma=1.0,
+                double_q=True, 
+                use_non_zero_terminal_state=False,
+                scope="deepq", 
+                reuse=None, 
+                param_noise=False, 
+                param_noise_filter_func=None):
     """Creates the train function:
 
     Parameters
@@ -340,7 +350,11 @@ def build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=
             q_tp1_best = tf.reduce_sum(q_tp1 * tf.one_hot(q_tp1_best_using_online_net, num_actions), 1)
         else:
             q_tp1_best = tf.reduce_max(q_tp1, 1)
-        q_tp1_best_masked = (1.0 - done_mask_ph) * q_tp1_best
+        
+        if use_non_zero_terminal_state:
+            q_tp1_best_masked = q_tp1_best
+        else:
+            q_tp1_best_masked = (1.0 - done_mask_ph) * q_tp1_best
 
         # compute RHS of bellman equation
         q_t_selected_target = rew_t_ph + gamma * q_tp1_best_masked

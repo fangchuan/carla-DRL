@@ -51,7 +51,10 @@
     2019-03-18:   1.0.0       改回reward_function;
     2019-03-19:   1.0.0       在reset_env()中添加 speedup, 使复位后agent在一个相同初始速度上;
     2019-03-22:   1.0.0       修改reward_function: 距离项改为 location_cofficient * np.clip(delta_distance, -10, 10);
-
+    2019-03-27:   1.0.0       early_terminate_on_collision=False, 为了让agent更多的观测collision信息;
+    2019-03-28:   1.0.0       collision_coefficient=-0.002;
+                              MAX_SPEED_LIMIT=35 km/h,超速则设置throttle=0;
+                              early_terminate_on_collision=True, distance_reward范围[-100,10]
 
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
@@ -75,11 +78,10 @@ import numpy as np
 from collections import deque
 from datetime import datetime
 from gym.spaces import Box, Discrete, Tuple
-sys.path.append("/home/fc/PROJECTS/carla-drl-docker/carla-drl/utils/")
-from common import DEBUG_PRINT as DEBUG_PRINT
+from utils.common import DEBUG_PRINT
 
 # Set this to the path to your Carla binary
-SERVER_BINARY = os.environ.get("CARLA_SERVER", os.path.expanduser("~/PROJECTS/carla-drl-docker/simulator/CarlaUE4.sh"))
+SERVER_BINARY = os.environ.get("CARLA_SERVER", os.path.expanduser("~/PROJECTS/carla-drl-docker/simulator-0.8.4/CarlaUE4.sh"))
 assert os.path.exists(SERVER_BINARY), "CARLA_SERVER environment variable is not set properly. Please check and retry"
 
 
@@ -129,15 +131,15 @@ scenario_config['weather_distribution'] = weathers
 
 # Default environment configuration
 ENVIRONMENT_CONFIG = {
-    "discrete_actions": True,
+    "discrete_actions": False,
     "use_gray_or_depth_image":True,
     "use_image_only_observations": True,  # Exclude high-level planner inputs & goal info from the observations
     "server_map": "/Game/Maps/" + scenario_config["city"][0], # Town01
     "scenarios": scenario_config["Lane_Keep_Town1"], #[scenario_config["Lane_Keep_Town1"],scenario_config["Lane_Keep_Town2"]],
     "use_random_position_points": False,
-    "framestack": 4,  # note: only [1, 2, 3,4] currently supported
+    "framestack": 2,  # note: only [1, 2, 3,4] currently supported
     "enable_planner": True,
-    "use_depth_camera": True,
+    "use_depth_camera": False,
     "early_terminate_on_collision": True,
     "verbose": False,
     "render" : True,  # Render to display if true
@@ -152,33 +154,25 @@ ENVIRONMENT_CONFIG = {
 # Number of retries if the server doesn't respond
 RETRIES_ON_ERROR = 10
 # max speed km/h
-MAX_SPEED_LIMIT = 30
+MAX_SPEED_LIMIT = 35
 # the threshold for total_reward
 REWARD_THRESHOLD_LOW = -100.0
 # Define the discrete action space
 ACTION_DIMENSIONS = 2
-THROTTLE_INDEX = 0
-BRAKE_INDEX = 0
-STEER_INDEX = 1
-# REVERSE_INDEX = 2
+THROTTLE_INDEX = 1
+BRAKE_INDEX = 1
+STEER_INDEX = 0
 DISCRETE_ACTIONS = {
-    #  throttle brake steer reverse
+    # steer throttle/brake
     0: [0.0, 0.0],    # Coast
-    1: [0.0, -0.5],   # Turn Left
-    2: [0.0, 0.5],    # Turn Right
-    3: [1.0, 0.0],    # Forward
-    4: [-0.5,0.0],   # Brake
-    5: [1.0, -0.5],   # Bear Left & accelerate
-    6: [1.0, 0.5],    # Bear Right & accelerate
+    1: [-0.5, 0.0],   # Turn Left
+    2: [0.5, 0.0],    # Turn Right
+    3: [0.0, 1.0],    # Forward
+    4: [0.0,-0.5],   # Brake
+    5: [-0.5, 1.0],   # Bear Left & accelerate
+    6: [0.5, 1.0],    # Bear Right & accelerate
     7: [-0.5,-0.5],  # Bear Left & decelerate
-    8: [-0.5, 0.5],   # Bear Right & decelerate
-    # 9: [0.0, 0.0, -0.5, 1.0],  # Turn back Left
-    # 10: [0.0, 0.0, 0.5, 1.0],  # Turn back Right
-    # 11: [1.0, 0.0, 0.0, 1.0],  # Backward
-    # 12: [1.0, 0.0, -0.5, 1.0],  # Bear back Left & accelerate
-    # 13: [1.0, 0.0, 0.5, 1.0],  # Bear back Right & accelerate
-    # 14: [0.0, 0.5, -0.5, 1.0],  # Bear back Left & decelerate
-    # 15: [0.0, 0.5, 0.5, 1.0],  # Bear back Right & decelerate
+    8: [0.5,-0.5],   # Bear Right & decelerate
 }
 
 # define the parameters used to assign the hyperparameters of several factors
@@ -186,7 +180,7 @@ DISCRETE_ACTIONS = {
 REWARD_ASSIGN_PARAMETERS = {
     "location_coefficient": 1.0,
     "speed_coefficient": 0.05,
-    "collision_coefficient": -0.00002,
+    "collision_coefficient": -0.002,
     "offroad_coefficient": -20.0,
     "otherland_coefficient":-20.0
 }
@@ -218,7 +212,7 @@ def print_measurements(measurements):
     message += "{other_lane:.0f}% other lane, {offroad:.0f}% off-road, "
     message += "({agents_num:d} non-player agents in the scene)"
     message = message.format(
-        pos_x=player_measurements.transform.location.x,  # cm -> m
+        pos_x=player_measurements.transform.location.x,
         pos_y=player_measurements.transform.location.y,
         speed=player_measurements.forward_speed,
         col_cars=player_measurements.collision_vehicles,
@@ -241,12 +235,6 @@ def check_collision(py_measurements):
     return bool(collided)
 
 class CarlaEnv(gym.Env):
-    
-    metadata = {
-        'render.modes':['human','rgb_array'],
-        'video.frame_per_second':2
-    }
-
     def __init__(self, config=ENVIRONMENT_CONFIG):
         """
         Carla Gym Environment class implementation. Creates an OpenAI Gym compatible driving environment based on
@@ -284,7 +272,7 @@ class CarlaEnv(gym.Env):
         self._spec = lambda: None
         self._spec.id = "Carla-v0"
         self._seed = ENVIRONMENT_CONFIG["seed"]
-        self.viewer = None
+
         self.server_port = None
         self.server_process = None
         self.client = None
@@ -398,6 +386,7 @@ class CarlaEnv(gym.Env):
         settings.set(
                     SynchronousMode=True,
                     SendNonPlayerAgentsInfo=True,
+                    DisableTwoWheeledVehicles=True,
                     NumberOfVehicles=self.scenario["num_vehicles"],
                     NumberOfPedestrians=self.scenario["num_pedestrians"],
                     WeatherId=self.weather)
@@ -503,12 +492,18 @@ class CarlaEnv(gym.Env):
         throttle = float(np.clip(action[THROTTLE_INDEX], 0, 1))
         brake = float(abs(np.clip(action[BRAKE_INDEX], -1, 0)))
         steer = float(np.clip(action[STEER_INDEX], -1, 1))
-        # reverse = bool(np.clip(action[REVERSE_INDEX], 0, 1) >= 0.5)
         reverse = False
         hand_brake = False
 
+        # prevent braking
+        # if brake < 0.1 or throttle > brake:
+        #     brake = 0
+
+        # prevent over speeding
+        if self.prev_measurement['agent_forward_speed'] * 3.6 > MAX_SPEED_LIMIT and brake == 0:
+            throttle = 0.0
         # if self.config["verbose"]:
-        #     DEBUG_PRINT("steer = ", steer, " throttle =", throttle, " brake = ", brake, " reverse = ", reverse)
+        #     DEBUG_PRINT("steer = ", steer, " throttle =", throttle, " brake = ", brake)
 
         self.client.send_control( steer=steer, throttle=throttle, brake=brake,
                                     hand_brake=hand_brake, reverse=reverse)
@@ -531,7 +526,7 @@ class CarlaEnv(gym.Env):
                                       "hand_brake": hand_brake}
 
         reward = self.calculate_reward(py_measurements)
-        
+
         self.total_reward += reward
 
         # if self.config["verbose"]:
@@ -539,12 +534,12 @@ class CarlaEnv(gym.Env):
 
         py_measurements["reward"] = reward
         py_measurements["total_reward"] = self.total_reward
-        
+
         done = ( self.global_steps > self.scenario["max_steps"] or
                  py_measurements["next_command"] == "REACH_GOAL" or
                  self.total_reward < REWARD_THRESHOLD_LOW or
                 (self.config["early_terminate_on_collision"] and check_collision(py_measurements)))
-        
+
         py_measurements["done"] = done
         self.prev_measurement = py_measurements
 
@@ -662,7 +657,6 @@ class CarlaEnv(gym.Env):
             "num_pedestrians": self.scenario["num_pedestrians"],
             "max_steps": self.scenario["max_steps"],
             "next_command": next_command,
-            "is_overspeed": (current_measurement.forward_speed > MAX_SPEED_LIMIT)
         }
 
 
@@ -683,22 +677,22 @@ class CarlaEnv(gym.Env):
         # veihcle speed , turn from m/s to km/h
         cur_speed = current_measurement["agent_forward_speed"] * 3.6
         prev_speed = self.prev_measurement["agent_forward_speed"] * 3.6
-        # veihcle collision 
+        # veihcle collision
         cur_collision = current_measurement["collision_vehicles"] + current_measurement["collision_pedestrians"] + current_measurement["collision_other"]
         prev_collision = self.prev_measurement["collision_vehicles"]+self.prev_measurement["collision_pedestrians"]+self.prev_measurement["collision_other"]
         # veihcle offroad
-        cur_offroad = current_measurement["intersection_offroad"] 
+        cur_offroad = current_measurement["intersection_offroad"]
         prev_offroad = self.prev_measurement["intersection_offroad"]
         # veihcle other lane
         cur_otherlane = current_measurement["intersection_otherlane"]
         prev_otherlane = self.prev_measurement["intersection_otherlane"]
 
         # if self.config["verbose"]:
-        #     DEBUG_PRINT("Current distance to goal {}, Previous distance to goal {}".format(cur_dist, prev_dist))
+        DEBUG_PRINT("Current distance to goal {}, Previous distance to goal {}".format(cur_dist, prev_dist))
 
         # Distance travelled toward the goal in m
-        # constarined into [-100, +100]
-        reward += REWARD_ASSIGN_PARAMETERS["location_coefficient"] * np.clip((prev_dist - cur_dist), -10.0, 10.0)
+        # constarined into [-1000, +10], because sometimes the agent dosn't follow the direction command, so we give him a big penalty
+        reward += REWARD_ASSIGN_PARAMETERS["location_coefficient"] * np.clip((prev_dist - cur_dist), -100.0, 10.0)
 
         # Change in speed (km/hr)
         # limit speed less than 30km/h
@@ -723,13 +717,6 @@ class CarlaEnv(gym.Env):
         reward += REWARD_ASSIGN_PARAMETERS["otherland_coefficient"] * (cur_otherlane - prev_otherlane)
 
         return reward
-
-    def render(self, mode='human', close=False):
-        if self.viewer is None:
-            from gym.envs.classic_control import rendering
-            self.viewer = rendering.Viewer(self.config["render_x_res"], self.config["render_y_res"], display=":0")
-        return self.viewer.render(return_rgb_array=True)
-        
 
 
 # import tensorflow as tf

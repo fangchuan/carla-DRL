@@ -477,3 +477,11 @@ def count_vars(scope):
     '''
     v = get_vars(scope)
     return sum([np.prod(var.shape.as_list()) for var in v])
+
+def huber_loss(x, delta=1.0):
+    """Reference: https://en.wikipedia.org/wiki/Huber_loss"""
+    return tf.where(
+        tf.abs(x) < delta,
+        tf.square(x) * 0.5,
+        delta * (tf.abs(x) - 0.5 * delta)
+    )

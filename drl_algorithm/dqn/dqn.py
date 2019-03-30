@@ -1,4 +1,32 @@
+"""
+*********************************************************************************************************
+*
+*	模块名称 : dqn模块
+*	文件名称 : dqn.py
+*	版    本 : V1.0.0
+*   作    者 ：fc
+*   日    期 ：2019/03/28
+*	说    明 :
+*             The functions in this file can are used to create the following functions:
+*
+* \par Method List:
+*    1.    build_act(make_obs_ph, q_func, num_actions, scope="deepq", reuse=None);
+*    2.    build_act_with_param_noise(make_obs_ph, q_func, num_actions, scope="deepq", reuse=None, param_noise_filter_func=None);
+*    3.    build_train(make_obs_ph, q_func, num_actions, optimizer, grad_norm_clipping=None, gamma=1.0,double_q=True, scope="deepq", reuse=None, param_noise=False, param_noise_filter_func=None);
+*    4.    scope_vars(scope, trainable_only=False);
+*    5.    scope_name();
+*    6.    absolute_scope_name(relative_scope_name);
+*    7.    default_param_noise_filter(var);
+*
+*   修订记录：
+	2019-03-28：   1.0.0      build;
+							  修改q_function, 只有最后fc层后接BN;
 
+
+*	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
+*
+*********************************************************************************************************
+"""
 import os
 import numpy as np
 import tensorflow as tf
@@ -28,27 +56,25 @@ def q_function(inpt, num_actions, scope, reuse=False):
      """
     batch_train = tf.constant(True, dtype=tf.bool)
     with tf.variable_scope(scope, reuse=reuse):
-        out = tf.cast(inpt, tf.float32) / 255.
-        # batch_norm_params = {
-        #     'decay': 0.997,
-        #     'epsilon': 1e-5,
-        #     'scale': True,
-        #     'is_training':True,
-        #     'updates_collections': tf.GraphKeys.UPDATE_OPS,
-        # }
-        out = batch_norm(out, train=batch_train)
-        out = layers.conv2d(out, 32, kernel_size=[8,8], stride=4, padding='SAME', activation_fn=tf.nn.relu)
-        out = batch_norm(out, train=batch_train)
+        out = inpt
+        # out = tf.cast(inpt, tf.float32) / 255.
+        # out = batch_norm(out, train=batch_train)
+        out = layers.conv2d(out, 32, kernel_size=[8,8], stride=4, padding='SAME', activation_fn=None)
+        # out = batch_norm(out, train=batch_train)
+        out = tf.nn.tanh(out)
         out = layers.max_pool2d(out, kernel_size=[3,3], stride=2, padding='VALID')
-        out = layers.conv2d(out, 64, kernel_size=[4,4], stride=2, padding='SAME', activation_fn=tf.nn.relu)
-        out = batch_norm(out, train=batch_train)
+        out = layers.conv2d(out, 64, kernel_size=[4,4], stride=2, padding='SAME', activation_fn=None)
+        # out = batch_norm(out, train=batch_train)
+        out = tf.nn.tanh(out)
         out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
-        out = layers.conv2d(out, 192, kernel_size=[3, 3], stride=1, padding='SAME', activation_fn=tf.nn.relu)
-        out = batch_norm(out, train=batch_train)
+        out = layers.conv2d(out, 192, kernel_size=[3, 3], stride=1, padding='SAME', activation_fn=None)
+        # out = batch_norm(out, train=batch_train)
+        out = tf.nn.tanh(out)
         reshape = tf.reshape(out, shape=[-1, out.get_shape()[1] * out.get_shape()[2] * 192])
 
-        out = layers.fully_connected(reshape, num_outputs=512, activation_fn=tf.nn.relu)
+        out = layers.fully_connected(reshape, num_outputs=512, activation_fn=None)
         out = batch_norm(out, train=batch_train)
+        out = tf.nn.tanh(out)
         out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
         return out
 

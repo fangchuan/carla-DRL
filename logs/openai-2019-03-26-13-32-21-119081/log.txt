@@ -1,0 +1,697 @@
+Logging to logs/openai-2019-03-26-13-32-21-119081
+ the network use 2184359.0 varibales
+--------------------------------
+| episodes          | 20       |
+| mean_100ep_reward | 4.42     |
+| steps             | 4039     |
+| time_exploring    | 60       |
+--------------------------------
+Saving model due to mean reward increase: None -> 4.42
+--------------------------------
+| episodes          | 40       |
+| mean_100ep_reward | 4.54     |
+| steps             | 7874     |
+| time_exploring    | 22       |
+--------------------------------
+Saving model due to mean reward increase: 4.42 -> 4.54
+--------------------------------
+| episodes          | 60       |
+| mean_100ep_reward | 4.67     |
+| steps             | 11546    |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 4.54 -> 4.67
+--------------------------------
+| episodes          | 80       |
+| mean_100ep_reward | 5.35     |
+| steps             | 15480    |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 4.67 -> 5.35
+--------------------------------
+| episodes          | 100      |
+| mean_100ep_reward | 6.83     |
+| steps             | 19341    |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 5.35 -> 6.83
+--------------------------------
+| episodes          | 120      |
+| mean_100ep_reward | 8.51     |
+| steps             | 23059    |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 6.83 -> 8.51
+--------------------------------
+| episodes          | 140      |
+| mean_100ep_reward | 10.1     |
+| steps             | 26864    |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 8.51 -> 10.14
+--------------------------------
+| episodes          | 160      |
+| mean_100ep_reward | 11.6     |
+| steps             | 30657    |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 10.14 -> 11.6
+--------------------------------
+| episodes          | 180      |
+| mean_100ep_reward | 11.2     |
+| steps             | 34657    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 200      |
+| mean_100ep_reward | 9.49     |
+| steps             | 38264    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 220      |
+| mean_100ep_reward | 8.33     |
+| steps             | 42250    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 240      |
+| mean_100ep_reward | 7.1      |
+| steps             | 45809    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 260      |
+| mean_100ep_reward | 5.66     |
+| steps             | 49656    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 280      |
+| mean_100ep_reward | 5.56     |
+| steps             | 53384    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 300      |
+| mean_100ep_reward | 5.96     |
+| steps             | 57114    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 320      |
+| mean_100ep_reward | 6.18     |
+| steps             | 60899    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 340      |
+| mean_100ep_reward | 6.49     |
+| steps             | 64939    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 360      |
+| mean_100ep_reward | 7.69     |
+| steps             | 68822    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 380      |
+| mean_100ep_reward | 8.56     |
+| steps             | 72821    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 400      |
+| mean_100ep_reward | 9.39     |
+| steps             | 76808    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 420      |
+| mean_100ep_reward | 8.82     |
+| steps             | 80845    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 440      |
+| mean_100ep_reward | 8.61     |
+| steps             | 84873    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 460      |
+| mean_100ep_reward | 6.41     |
+| steps             | 88709    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 480      |
+| mean_100ep_reward | 4.83     |
+| steps             | 92656    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 500      |
+| mean_100ep_reward | 3.4      |
+| steps             | 96696    |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 520      |
+| mean_100ep_reward | 3.74     |
+| steps             | 100736   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 540      |
+| mean_100ep_reward | 4.07     |
+| steps             | 104710   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 560      |
+| mean_100ep_reward | 6.5      |
+| steps             | 108750   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 580      |
+| mean_100ep_reward | 8.39     |
+| steps             | 112676   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 600      |
+| mean_100ep_reward | 10.4     |
+| steps             | 116716   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 620      |
+| mean_100ep_reward | 11       |
+| steps             | 120621   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 640      |
+| mean_100ep_reward | 12.2     |
+| steps             | 124585   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 11.6 -> 12.17
+--------------------------------
+| episodes          | 660      |
+| mean_100ep_reward | 13.1     |
+| steps             | 128625   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 12.17 -> 13.13
+--------------------------------
+| episodes          | 680      |
+| mean_100ep_reward | 13.1     |
+| steps             | 132598   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 700      |
+| mean_100ep_reward | 13.7     |
+| steps             | 136548   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 13.13 -> 13.7
+--------------------------------
+| episodes          | 720      |
+| mean_100ep_reward | 14.4     |
+| steps             | 140510   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 13.7 -> 14.39
+--------------------------------
+| episodes          | 740      |
+| mean_100ep_reward | 14.8     |
+| steps             | 144550   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 14.39 -> 14.79
+--------------------------------
+| episodes          | 760      |
+| mean_100ep_reward | 14.2     |
+| steps             | 148590   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 780      |
+| mean_100ep_reward | 15.1     |
+| steps             | 152508   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 14.79 -> 15.06
+--------------------------------
+| episodes          | 800      |
+| mean_100ep_reward | 15.1     |
+| steps             | 156548   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 15.06 -> 15.09
+--------------------------------
+| episodes          | 820      |
+| mean_100ep_reward | 15.3     |
+| steps             | 160491   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 15.09 -> 15.26
+--------------------------------
+| episodes          | 840      |
+| mean_100ep_reward | 13.4     |
+| steps             | 164278   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 860      |
+| mean_100ep_reward | 12.4     |
+| steps             | 168304   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 880      |
+| mean_100ep_reward | 12       |
+| steps             | 172305   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 900      |
+| mean_100ep_reward | 10.8     |
+| steps             | 176101   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 920      |
+| mean_100ep_reward | 10.4     |
+| steps             | 180048   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 940      |
+| mean_100ep_reward | 11.9     |
+| steps             | 183935   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 960      |
+| mean_100ep_reward | 13       |
+| steps             | 187895   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 980      |
+| mean_100ep_reward | 14.1     |
+| steps             | 191885   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1000     |
+| mean_100ep_reward | 15.3     |
+| steps             | 195730   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 15.26 -> 15.31
+--------------------------------
+| episodes          | 1020     |
+| mean_100ep_reward | 16       |
+| steps             | 199677   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 15.31 -> 16.03
+--------------------------------
+| episodes          | 1040     |
+| mean_100ep_reward | 15.8     |
+| steps             | 203562   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1060     |
+| mean_100ep_reward | 15.1     |
+| steps             | 207396   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1080     |
+| mean_100ep_reward | 14.4     |
+| steps             | 211343   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1100     |
+| mean_100ep_reward | 15       |
+| steps             | 215362   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1120     |
+| mean_100ep_reward | 15.1     |
+| steps             | 219339   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1140     |
+| mean_100ep_reward | 15.1     |
+| steps             | 223379   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1160     |
+| mean_100ep_reward | 15.4     |
+| steps             | 227208   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1180     |
+| mean_100ep_reward | 15.1     |
+| steps             | 231108   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1200     |
+| mean_100ep_reward | 14.7     |
+| steps             | 235148   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1220     |
+| mean_100ep_reward | 14       |
+| steps             | 239123   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1240     |
+| mean_100ep_reward | 14.6     |
+| steps             | 243023   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1260     |
+| mean_100ep_reward | 16       |
+| steps             | 246983   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1280     |
+| mean_100ep_reward | 16.8     |
+| steps             | 250942   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 16.03 -> 16.81
+--------------------------------
+| episodes          | 1300     |
+| mean_100ep_reward | 16.5     |
+| steps             | 254720   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1320     |
+| mean_100ep_reward | 17.5     |
+| steps             | 258638   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 16.81 -> 17.51
+--------------------------------
+| episodes          | 1340     |
+| mean_100ep_reward | 17.8     |
+| steps             | 262511   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 17.51 -> 17.76
+--------------------------------
+| episodes          | 1360     |
+| mean_100ep_reward | 17.7     |
+| steps             | 266357   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1380     |
+| mean_100ep_reward | 18.2     |
+| steps             | 270194   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 17.76 -> 18.2
+--------------------------------
+| episodes          | 1400     |
+| mean_100ep_reward | 18       |
+| steps             | 274156   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1420     |
+| mean_100ep_reward | 18       |
+| steps             | 278110   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1440     |
+| mean_100ep_reward | 17.8     |
+| steps             | 282042   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1460     |
+| mean_100ep_reward | 17.2     |
+| steps             | 285894   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1480     |
+| mean_100ep_reward | 16.6     |
+| steps             | 289894   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1500     |
+| mean_100ep_reward | 17.1     |
+| steps             | 293934   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1520     |
+| mean_100ep_reward | 16.9     |
+| steps             | 297742   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1540     |
+| mean_100ep_reward | 17.1     |
+| steps             | 301682   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1560     |
+| mean_100ep_reward | 17       |
+| steps             | 305663   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1580     |
+| mean_100ep_reward | 17.5     |
+| steps             | 309640   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1600     |
+| mean_100ep_reward | 17.9     |
+| steps             | 313586   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1620     |
+| mean_100ep_reward | 18.4     |
+| steps             | 317525   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 18.2 -> 18.41
+--------------------------------
+| episodes          | 1640     |
+| mean_100ep_reward | 18.5     |
+| steps             | 321451   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 18.41 -> 18.47
+--------------------------------
+| episodes          | 1660     |
+| mean_100ep_reward | 18.7     |
+| steps             | 325405   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 18.47 -> 18.7
+--------------------------------
+| episodes          | 1680     |
+| mean_100ep_reward | 18.6     |
+| steps             | 329353   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1700     |
+| mean_100ep_reward | 17.9     |
+| steps             | 333380   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1720     |
+| mean_100ep_reward | 17.9     |
+| steps             | 337389   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1740     |
+| mean_100ep_reward | 18.7     |
+| steps             | 341429   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 18.7 -> 18.74
+--------------------------------
+| episodes          | 1760     |
+| mean_100ep_reward | 18.3     |
+| steps             | 345052   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1780     |
+| mean_100ep_reward | 17.3     |
+| steps             | 348982   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1800     |
+| mean_100ep_reward | 17.9     |
+| steps             | 352922   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1820     |
+| mean_100ep_reward | 17.8     |
+| steps             | 356827   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1840     |
+| mean_100ep_reward | 16.7     |
+| steps             | 360744   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1860     |
+| mean_100ep_reward | 16.9     |
+| steps             | 364586   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1880     |
+| mean_100ep_reward | 17.4     |
+| steps             | 368540   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1900     |
+| mean_100ep_reward | 17.4     |
+| steps             | 372537   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1920     |
+| mean_100ep_reward | 17.6     |
+| steps             | 376442   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1940     |
+| mean_100ep_reward | 18.7     |
+| steps             | 380429   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 1960     |
+| mean_100ep_reward | 19.4     |
+| steps             | 384359   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 18.74 -> 19.39
+--------------------------------
+| episodes          | 1980     |
+| mean_100ep_reward | 20.4     |
+| steps             | 388353   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 19.39 -> 20.36
+--------------------------------
+| episodes          | 2000     |
+| mean_100ep_reward | 20.2     |
+| steps             | 392299   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 2020     |
+| mean_100ep_reward | 20.8     |
+| steps             | 395978   |
+| time_exploring    | 2        |
+--------------------------------
+Saving model due to mean reward increase: 20.36 -> 20.76
+--------------------------------
+| episodes          | 2040     |
+| mean_100ep_reward | 20.4     |
+| steps             | 399961   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 2060     |
+| mean_100ep_reward | 19.9     |
+| steps             | 403949   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 2080     |
+| mean_100ep_reward | 18.9     |
+| steps             | 407818   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 2100     |
+| mean_100ep_reward | 19.2     |
+| steps             | 411858   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 2120     |
+| mean_100ep_reward | 19       |
+| steps             | 415732   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 2140     |
+| mean_100ep_reward | 19.1     |
+| steps             | 419560   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 2160     |
+| mean_100ep_reward | 19.1     |
+| steps             | 423576   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 2180     |
+| mean_100ep_reward | 20.6     |
+| steps             | 427616   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 2200     |
+| mean_100ep_reward | 20.6     |
+| steps             | 431558   |
+| time_exploring    | 2        |
+--------------------------------
+--------------------------------
+| episodes          | 2220     |
+| mean_100ep_reward | 20       |
+| steps             | 435598   |
+| time_exploring    | 2        |
+--------------------------------
