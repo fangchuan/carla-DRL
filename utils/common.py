@@ -68,7 +68,7 @@ def common_arg_parser():
     argparser.add_argument(
         '--num_timesteps',
         type=float,
-        default=1e6,
+        default=1e8,
         dest='total_steps_num',
         help='the total steps for training')
     argparser.add_argument(
@@ -386,7 +386,7 @@ def wrap_carla(env, episode_life=False, clip_rewards=False, frame_stack=False, s
         env = FrameStack(env, 4)
     return env
 
-def batch_norm(x, train, eps=1e-05, decay=0.9, affine=True, name=None):
+def batch_norm(x, train, eps=1e-03, decay=0.99, affine=True, name=None):
     '''
 
     :param x: input tensor
@@ -397,7 +397,7 @@ def batch_norm(x, train, eps=1e-05, decay=0.9, affine=True, name=None):
     :param name:
     :return:
     '''
-    with tf.variable_scope(name, default_name='BatchNorm2d'):
+    with tf.variable_scope(name, default_name='BatchNorm2d', reuse=tf.AUTO_REUSE):
         params_shape = [x.shape[-1]]
         moving_mean = tf.get_variable('mean', shape=params_shape, initializer=tf.zeros_initializer, trainable=False)
         moving_variance = tf.get_variable('variance', shape=params_shape, initializer=tf.ones_initializer, trainable=False)
@@ -414,6 +414,8 @@ def batch_norm(x, train, eps=1e-05, decay=0.9, affine=True, name=None):
             beta = tf.get_variable('beta', params_shape, initializer=tf.zeros_initializer)
             gamma = tf.get_variable('gamma', params_shape, initializer=tf.ones_initializer)
             x = tf.nn.batch_normalization(x, mean, variance, beta, gamma, eps)
+            print("bn beta name : ", beta.name)
+            print("bn gamma name : ", gamma.name)
         else:
             x = tf.nn.batch_normalization(x, mean, variance, None, None, eps)
         return x

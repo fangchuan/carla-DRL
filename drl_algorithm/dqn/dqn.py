@@ -21,7 +21,8 @@
 *   修订记录：
 	2019-03-28：   1.0.0      build;
 							  修改q_function, 只有最后fc层后接BN;
-
+    2019-3-30:                输入层加一层 BN;
+                              最后fc层神经元个数改为64;
 
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
@@ -56,25 +57,23 @@ def q_function(inpt, num_actions, scope, reuse=False):
      """
     batch_train = tf.constant(True, dtype=tf.bool)
     with tf.variable_scope(scope, reuse=reuse):
-        out = inpt
-        # out = tf.cast(inpt, tf.float32) / 255.
-        # out = batch_norm(out, train=batch_train)
+        out = tf.cast(inpt, tf.float32) / 255.
         out = layers.conv2d(out, 32, kernel_size=[8,8], stride=4, padding='SAME', activation_fn=None)
-        # out = batch_norm(out, train=batch_train)
-        out = tf.nn.tanh(out)
-        out = layers.max_pool2d(out, kernel_size=[3,3], stride=2, padding='VALID')
+        out = batch_norm(out, train=batch_train, name="conv0_bn")
+        out = tf.nn.relu(out)
+        # out = layers.max_pool2d(out, kernel_size=[3,3], stride=2, padding='VALID')
         out = layers.conv2d(out, 64, kernel_size=[4,4], stride=2, padding='SAME', activation_fn=None)
-        # out = batch_norm(out, train=batch_train)
-        out = tf.nn.tanh(out)
-        out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
-        out = layers.conv2d(out, 192, kernel_size=[3, 3], stride=1, padding='SAME', activation_fn=None)
-        # out = batch_norm(out, train=batch_train)
-        out = tf.nn.tanh(out)
-        reshape = tf.reshape(out, shape=[-1, out.get_shape()[1] * out.get_shape()[2] * 192])
+        out = batch_norm(out, train=batch_train, name="conv1_bn")
+        out = tf.nn.relu(out)
+        # out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
+        out = layers.conv2d(out, 64, kernel_size=[3, 3], stride=1, padding='SAME', activation_fn=None)
+        out = batch_norm(out, train=batch_train, name="con2_bn")
+        out = tf.nn.relu(out)
+        reshape = tf.reshape(out, shape=[-1, out.get_shape()[1] * out.get_shape()[2] * 64])
 
         out = layers.fully_connected(reshape, num_outputs=512, activation_fn=None)
-        out = batch_norm(out, train=batch_train)
-        out = tf.nn.tanh(out)
+        out = batch_norm(out, train=batch_train, name="fc0_bn")
+        out = tf.nn.relu(out)
         out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
         return out
 
@@ -126,7 +125,7 @@ def dqn(env,
     #     prioritized_replay_beta_iters = args.total_steps_num
     # beta_schedule = LinearSchedule(prioritized_replay_beta_iters,
     #                                initial_p=prioritized_replay_beta0,
-    #                                final_p=FINAL_EPSILON)
+    #                                final_p=1.0)
     # Create the schedule for exploration starting from 1 (every action is random) down to
     # 0.02 (98% of actions are selected according to values predicted by the model).
     exploration = LinearSchedule(schedule_timesteps=exploration_steps,
@@ -197,5 +196,8 @@ def dqn(env,
                 logger.log("Saving model due to mean reward increase: {} -> {}".format(saved_mean_reward, mean_100ep_reward))
                 save_variables(model_file_save_path)
                 saved_mean_reward = mean_100ep_reward
+
+            obs = env.reset()
+
 
     return actor

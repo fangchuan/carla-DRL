@@ -2,6 +2,7 @@ import os
 import sys
 import gym
 import tensorflow as tf
+import numpy as np
 import baselines.common.tf_util as Util
 from utils.common import common_arg_parser
 from utils import logger
@@ -9,7 +10,8 @@ from utils.common import MaxAndSkipEnv
 from datetime import datetime
 from drl_algorithm.ddpg import ddpg
 
-
+# from knockknock import email_sender
+# @email_sender(recipient_email="1457737815@qq.com", sender_email="fang1457737815@gmail.com")
 def main(argvs):
     argparser = common_arg_parser()
     args = argparser.parse_args()
@@ -22,7 +24,7 @@ def main(argvs):
     MAX_SKIP_FRAMES = 4
     CRITIC_L2_REGULARIATION = 1e-2
     NOISE_STDDEV = 0.2
-    ACTOR_LEARN_RATE = 1e-3
+    ACTOR_LEARN_RATE = 1e-4
     CRITIC_LEARN_RATE = 1e-3
     REPLAY_BUFFER_SIZE = 5e4
     GAMMA = 0.99
@@ -39,7 +41,7 @@ def main(argvs):
 
         env = gym.make('Carla-v0')
         # 将env设置为SkipEnv, 返回MaxObservation, total_reward
-        # env = MaxAndSkipEnv(env, skip=MAX_SKIP_FRAMES)
+        env = MaxAndSkipEnv(env, skip=MAX_SKIP_FRAMES)
 
         if not os.path.exists(model_file_save_path):
             os.makedirs(model_file_save_path, exist_ok=True)
@@ -65,13 +67,14 @@ def main(argvs):
         if is_play:
             logger.log("Running DDPG trained model")
             obs = env.reset()
+            max_action = np.array(env.action_space.high)
+            print("max action : ", max_action)
             steps = 0
             while True:
                 action = action_fn(obs, apply_noise=False)
                 print("action : ", action)
-                action = action[0]
-
-                max_action = env.action_space.high
+                
+                
                 obs, reward, done, info = env.step(max_action * action)
                 done = done.any() if isinstance(done, np.ndarray) else done
                 steps += 1
@@ -80,7 +83,7 @@ def main(argvs):
                 logger.record_tabular("rewards", reward)
 
                 if done:
-                    obs = env.reset()
+                    obs = env.reset_env()
                     logger.dump_tabular()
 
         return action_fn

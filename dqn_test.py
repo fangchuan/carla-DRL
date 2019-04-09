@@ -47,7 +47,8 @@ from utils.common import NormalizedEnv, MaxAndSkipEnv
 from utils import logger
 from drl_algorithm.dqn import dqn
 
-
+# from knockknock import email_sender
+# @email_sender(recipient_email="1457737815@qq.com", sender_email="fang1457737815@gmail.com")
 def main(arg):
 
     argparser = common_arg_parser()
@@ -74,7 +75,7 @@ def main(arg):
     LEARN_RATE = 5e-4
     GAMMA = 0.99
     EXPERIENCE_REPLAY_BUFFER_SIZE = 50000
-    EPSILON_EXPLORATION_TIMESTEPS = 10000
+    EPSILON_EXPLORATION_TIMESTEPS = 100000
     INITIAL_EPSILON = 1.0
     FINAL_EPSILON = 0.02
     SAMPLE_BATCH_SIZE = 100

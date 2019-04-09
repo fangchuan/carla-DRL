@@ -12,52 +12,56 @@ from environment import carla_gym
 from utils.common import get_vars, count_vars
 from utils.replay_buffer import ReplayBuffer
 from utils import logger
-from utils.common import save_variables, load_variables
+from utils.common import save_variables, load_variables, batch_norm
 from .noise import NormalActionNoise, AdaptiveParamNoiseSpec, OrnsteinUhlenbeckActionNoise
 
-def base_network(x, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_layer_normal=True):
+# put the batch_normal layer behind the activation layer
+def base_network(x, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_batch_normal=True):
 
-    # out = tf.cast(x, dtype=tf.float32) / 255.0
-    out = x
+    batch_train = tf.constant(True, dtype=tf.bool)
+
+    out = tf.cast(x, dtype=tf.float32) / 255.0
+    
     out = layers.conv2d(out, 32, kernel_size=[8, 8], stride=4, padding='SAME', activation_fn=activation)
-    out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
-    if use_layer_normal:
-        out = layers.layer_norm(out, center=True, scale=True)
+    if use_batch_normal:
+        out = batch_norm(out, train=batch_train, name="conv0_bn")
     out = layers.conv2d(out, 64, kernel_size=[4, 4], stride=2, padding='SAME', activation_fn=activation)
-    out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
-    if use_layer_normal:
-        out = layers.layer_norm(out, center=True, scale=True)
-    out = layers.conv2d(out, 192, kernel_size=[3, 3], stride=1, padding='SAME', activation_fn=activation)
-    if use_layer_normal:
-        out = layers.layer_norm(out, center=True, scale=True)
-    reshape = tf.reshape(out, shape=[-1, out.get_shape()[1] * out.get_shape()[2] * 192])
-    out = layers.fully_connected(reshape, num_outputs=512, activation_fn=None)
-
-    out = layers.layer_norm(out, center=True, scale=True)
-    out = output_activation(out)
+    if use_batch_normal:
+        out = batch_norm(out, train=batch_train, name="conv1_bn")
+    out = layers.conv2d(out, 64, kernel_size=[3, 3], stride=1, padding='SAME', activation_fn=activation)
+    if use_batch_normal:
+        out = batch_norm(out, train=batch_train, name="conv2_bn")
+    reshape = tf.reshape(out, shape=[-1, out.get_shape()[1] * out.get_shape()[2] * 64])
+    out = reshape
     return out
 
-def actor_network(observations, num_actions, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_layer_normal=False):
+# put batch_normal before the last activation layer
+def actor_network(observations, num_actions, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_batch_normal=True):
+    batch_train = tf.constant(True, dtype=tf.bool)
 
-    x = base_network(observations, activation=activation, output_activation=output_activation, use_layer_normal=use_layer_normal)
-    x = layers.fully_connected(x, num_outputs=num_actions, activation_fn=None)
+    x = base_network(observations, activation=activation, output_activation=output_activation, use_batch_normal=use_batch_normal)
+    x = layers.fully_connected(x, 128, activation_fn=None)
+    # x = layers.layer_norm(x, scale=True, center=True, activation_fn=activation)
+    x = batch_norm(x, train=batch_train, name="actor_fc0_bn")
+    x = layers.fully_connected(x, num_actions, activation_fn=None)
+    # x = layers.layer_norm(x, scale=True, center=True, activation_fn=output_activation)
+    x = batch_norm(x, train=batch_train, name="actor_output_bn")
     x = output_activation(x)
     return x
 
-def critic_network(observations, actions, activation=tf.nn.relu, output_activation=tf.nn.relu, use_layer_normal=False):
+def critic_network(observations, actions, activation=tf.nn.relu, output_activation=tf.nn.relu, use_batch_normal=True):
+    
 
-    x = base_network(observations, activation=activation, output_activation=output_activation, use_layer_normal=use_layer_normal)
+    x = base_network(observations, activation=activation, output_activation=output_activation, use_batch_normal=use_batch_normal)
     # print("action shape: ", actions.get_shape().as_list())
-    x = tf.concat([x, actions], axis=-1)  # this assumes observation and action can be concatenated
-    x = layers.fully_connected(x, 64, activation_fn=None)
-    x = layers.layer_norm(x, center=True, scale=True)
-    x = activation(x)
+    actions_dense = layers.fully_connected(actions, 128, activation_fn=activation)
+    x = tf.concat([x, actions_dense], axis=-1)  # this assumes observation and action can be concatenated
+    x = layers.fully_connected(x, 128, activation_fn=activation)
     x = layers.fully_connected(x, 1, activation_fn=None)
-    x = layers.layer_norm(x, center=True, scale=True)
-    x = output_activation(x)
+    # x = output_activation(x)
     return x
 
-def actor_critic_network(observations, actions, activation=tf.nn.tanh, output_activation=tf.nn.tanh):
+def actor_critic_network(observations, actions, activation=tf.nn.relu, output_activation=tf.nn.tanh):
 
     num_actions = actions.shape.as_list()[-1]
 
