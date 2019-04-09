@@ -22,12 +22,12 @@
 
   "Lane_Keep_Town1": {
     "city": "Town01",
-    "start_pos_id": 36,
-    "end_pos_id": 40,
-    "num_vehicles": 95,
-    "num_pedestrians": 95,
+    "start_pos_id": 39,
+    "end_pos_id": 35,
+    "num_vehicles": 55,
+    "num_pedestrians": 30,
     "weather_distribution": [1],
-    "max_steps": 200
+    "episode_max_time": 100000
   },
 
   "Lane_Keep_Town2": {
@@ -37,7 +37,7 @@
     "num_vehicles": 25,
     "num_pedestrians": 30,
     "weather_distribution": [0],
-    "max_steps": 200
+    "episode_max_time": 100000
   },
 
   "Straight_Poses_Town01" : [

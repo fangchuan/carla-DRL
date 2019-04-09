@@ -137,17 +137,17 @@ ENVIRONMENT_CONFIG = {
     "server_map": "/Game/Maps/" + scenario_config["city"][0], # Town01
     "scenarios": scenario_config["Lane_Keep_Town1"], #[scenario_config["Lane_Keep_Town1"],scenario_config["Lane_Keep_Town2"]],
     "use_random_position_points": False,
-    "framestack": 2,  # note: only [1, 2, 3,4] currently supported
+    "framestack": 4,  # note: only [1, 2, 3,4] currently supported
     "enable_planner": True,
     "use_depth_camera": False,
     "early_terminate_on_collision": True,
     "verbose": False,
     "render" : True,  # Render to display if true
-    "render_x_res": 800,
-    "render_y_res": 600,
-    "camera_position":(0.3, 0, 1.3),
-    "image_x_res": 84,
-    "image_y_res": 84,
+    "render_x_res": 720,
+    "render_y_res": 512,
+    "camera_position":(2, 0, 1.4),
+    "image_x_res": 180,
+    "image_y_res": 128,
     "seed": 1
 }
 
@@ -155,8 +155,10 @@ ENVIRONMENT_CONFIG = {
 RETRIES_ON_ERROR = 10
 # max speed km/h
 MAX_SPEED_LIMIT = 35
+# the degree that agent run offroad
+MAX_OFFROAD_DEGREE = 0.5
 # the threshold for total_reward
-REWARD_THRESHOLD_LOW = -100.0
+REWARD_THRESHOLD_LOW = -1000.0
 # Define the discrete action space
 ACTION_DIMENSIONS = 2
 THROTTLE_INDEX = 1
@@ -181,7 +183,7 @@ REWARD_ASSIGN_PARAMETERS = {
     "location_coefficient": 1.0,
     "speed_coefficient": 0.05,
     "collision_coefficient": -0.002,
-    "offroad_coefficient": -20.0,
+    "offroad_coefficient": -40.0,
     "otherland_coefficient":-20.0
 }
 
@@ -276,7 +278,6 @@ class CarlaEnv(gym.Env):
         self.server_port = None
         self.server_process = None
         self.client = None
-        self.global_steps = 0
         self.total_reward = 0
         self.prev_measurement = None
         self.images = deque([], maxlen=config["framestack"])
@@ -300,20 +301,26 @@ class CarlaEnv(gym.Env):
 
         if self.config["render"]:
             self.server_process = subprocess.Popen(
-                                                    "{} {} -windowed -ResX={} -ResY={} -carla-server -carla-world-port={}".format(
+                                            "{} {} -benchmark -carla-no-hud -windowed -ResX={} -ResY={} -carla-server -carla-world-port={} -fps={}".format(
                                                             SERVER_BINARY,
                                                             self.config["server_map"],
                                                             self.config["render_x_res"],
                                                             self.config["render_y_res"],
-                                                            self.server_port),
+                                                            self.server_port,
+                                                            10),
                                                      shell=True,
                                                      preexec_fn=os.setsid,
                                                      stdout=open(os.devnull, "w"))
         else:
             self.server_process = subprocess.Popen(
                 ("SDL_VIDEODRIVER=offscreen SDL_HINT_CUDA_DEVICE={} {} " +
-                 self.config["server_map"] + " -windowed -ResX={} -ResY={} -carla-server -carla-world-port={}").
-                 format(0, SERVER_BINARY, self.config["render_x_res"], self.config["render_y_res"], self.server_port),
+                 self.config["server_map"] + " -benchmark -windowed -ResX={} -ResY={} -carla-server -carla-world-port={} -fps={}").format(
+                     0, 
+                     SERVER_BINARY, 
+                     self.config["render_x_res"], 
+                     self.config["render_y_res"], 
+                     self.server_port,
+                     10),
                  shell=True, preexec_fn=os.setsid, stdout=open(os.devnull, "w"))
 
         live_carla_processes.add(os.getpgid(self.server_process.pid))
@@ -325,6 +332,7 @@ class CarlaEnv(gym.Env):
             except Exception as e:
                 DEBUG_PRINT("Error connecting: {}, attempt {}".format(e, i))
                 time.sleep(2)
+
 
     def clear_server_state(self):
         '''
@@ -365,12 +373,11 @@ class CarlaEnv(gym.Env):
         raise error
 
     def reset_env(self):
-        self.global_steps = 0
+
         self.total_reward = 0
         self.prev_measurement = None
         self.images.clear()
-        self.episode_id = datetime.today().strftime("%Y-%m-%d_%H-%M-%S_%f")
-
+      
         # 对Carla环境进行配置
         settings = CarlaSettings()
         # 如果是单个场景（地图），则用此地图；否则随机选择一个场景
@@ -395,13 +402,17 @@ class CarlaEnv(gym.Env):
         # 在正前方安装摄像头
         if self.config["use_depth_camera"]:
             camera1 = Camera("CameraDepth", PostProcessing="Depth")
-            camera1.set_image_size(self.config["render_x_res"], self.config["render_y_res"])
+            camera1.set(FOV=100)
+            camera1.set_image_size(self.config["image_x_res"], self.config["image_y_res"])
             camera1.set_position(*(self.config['camera_position']))
+            camera1.set_rotation(-12, 0, 0)
             settings.add_sensor(camera1)
 
         camera2 = Camera("CameraRGB")
-        camera2.set_image_size(self.config["render_x_res"], self.config["render_y_res"])
+        camera2.set(FOV=100)
+        camera2.set_image_size(self.config["image_x_res"], self.config["image_y_res"])
         camera2.set_position(*(self.config['camera_position']))
+        camera2.set_rotation(-12, 0, 0)
         settings.add_sensor(camera2)
 
 
@@ -424,12 +435,16 @@ class CarlaEnv(gym.Env):
         DEBUG_PRINT( "Start pos {} ({}), end {} ({})".format(
                     self.scenario["start_pos_id"], self.start_coord,
                     self.scenario["end_pos_id"], self.end_coord))
-
+        
         # Notify the server that we want to start the episode at the
         # player_start index. This function blocks until the server is ready
         # to start the episode.
-        DEBUG_PRINT("Starting new episode...")
-        self.client.start_episode(self.scenario["start_pos_id"])
+        DEBUG_PRINT("Starting new episode...") 
+        try:
+            self.client.start_episode(self.scenario["start_pos_id"])
+        except:
+            self.client.connect()
+            self.client.start_episode(self.scenario["start_pos_id"])
 
         # start the game with some initial speed
         for i in range(30):
@@ -500,10 +515,10 @@ class CarlaEnv(gym.Env):
         #     brake = 0
 
         # prevent over speeding
-        if self.prev_measurement['agent_forward_speed'] * 3.6 > MAX_SPEED_LIMIT and brake == 0:
+        if self.prev_measurement['agent_forward_speed'] * 3.6 > MAX_SPEED_LIMIT :
             throttle = 0.0
         # if self.config["verbose"]:
-        #     DEBUG_PRINT("steer = ", steer, " throttle =", throttle, " brake = ", brake)
+        #DEBUG_PRINT("steer = ", steer, " throttle =", throttle, " brake = ", brake)
 
         self.client.send_control( steer=steer, throttle=throttle, brake=brake,
                                     hand_brake=hand_brake, reverse=reverse)
@@ -511,8 +526,8 @@ class CarlaEnv(gym.Env):
         # Process observations
         image, py_measurements = self._read_observation()
 
-        # if self.config["verbose"]:
-        DEBUG_PRINT("Next command", py_measurements["next_command"])
+        if self.config["verbose"]:
+            DEBUG_PRINT("Next command", py_measurements["next_command"])
 
         if type(action) is np.ndarray:
             py_measurements["action"] = [float(a) for a in action]
@@ -525,32 +540,46 @@ class CarlaEnv(gym.Env):
                                       "reverse": reverse,
                                       "hand_brake": hand_brake}
 
-        reward = self.calculate_reward(py_measurements)
-
+        # reward = self.calculate_reward(py_measurements)
+        delta_distance = py_measurements["distance_to_goal"] - self.prev_measurement["distance_to_goal"]
+        is_rush_wrong_way = delta_distance < -100
+        distance_reward = np.clip(delta_distance, a_min=-10, a_max=10)
+        speed_reward = py_measurements["agent_forward_speed"] - 1
+        if speed_reward > 30.:
+            speed_reward = 30.0
+        is_collision = check_collision(py_measurements) or is_rush_wrong_way
+        reward = distance_reward \
+                 +  speed_reward \
+                 - (py_measurements["intersection_otherlane"] * 5) \
+                 - (py_measurements["intersection_offroad"] * 5) \
+                 - is_collision * 100 \
+                 - np.abs(steer) * 10
+        DEBUG_PRINT("delta distance: ", delta_distance)
+        DEBUG_PRINT("reward: ", reward)
         self.total_reward += reward
 
-        # if self.config["verbose"]:
-        DEBUG_PRINT("Current total reward {:+.2f}".format(self.total_reward))
+        if self.config["verbose"]:
+            DEBUG_PRINT("Current total reward {:+.2f}".format(self.total_reward))
 
         py_measurements["reward"] = reward
         py_measurements["total_reward"] = self.total_reward
 
-        done = ( self.global_steps > self.scenario["max_steps"] or
-                 py_measurements["next_command"] == "REACH_GOAL" or
-                 self.total_reward < REWARD_THRESHOLD_LOW or
-                (self.config["early_terminate_on_collision"] and check_collision(py_measurements)))
+        done = ( py_measurements["game_timestamp"] > self.scenario["episode_max_time"] or
+            py_measurements["next_command"] == "REACH_GOAL" or
+            py_measurements["intersection_offroad"] > MAX_OFFROAD_DEGREE or
+            is_rush_wrong_way  or
+            (self.config["early_terminate_on_collision"] and check_collision(py_measurements)))
 
         py_measurements["done"] = done
         self.prev_measurement = py_measurements
 
-        self.global_steps += 1
         image = self.preprocess_image(image)
 
         return (self.encode_observation(image, py_measurements), reward, done, py_measurements)
 
     def preprocess_image(self, raw_image):
         '''
-                处理raw image
+        处理raw image
         :param image:
         :return:
         '''
@@ -560,26 +589,19 @@ class CarlaEnv(gym.Env):
             data = raw_image.data * 255
             # DEBUG_PRINT("image shape: ", data.shape)
             # 因为图片保存时x,y倒置
-            data = data.reshape(self.config["render_y_res"], self.config["render_x_res"], 1)
+            data = data.reshape(self.config["image_y_res"], self.config["image_x_res"], 1)
             data = cv2.resize(data, (self.config["image_x_res"], self.config["image_y_res"]), interpolation=cv2.INTER_AREA) #shrink the image
 
         else:
-            data = raw_image.data.reshape(self.config["render_y_res"], self.config["render_x_res"], 3)
+            data = raw_image.data.reshape(self.config["image_y_res"], self.config["image_x_res"], 3)
 
             if self.config["use_gray_or_depth_image"]:
                 data = cv2.cvtColor(data, cv2.COLOR_RGB2GRAY)
 
             data = cv2.resize(data, (self.config["image_x_res"], self.config["image_y_res"]),interpolation=cv2.INTER_AREA)
-
+        # cv2.imshow(winname="raw image", mat=data)
+        # cv2.waitKey(0)
         data = data.astype(np.uint8)
-
-        # mean, std = data.mean(), data.std()
-        # # DEBUG_PRINT("image mean: {:.2f}, image std: {:.2f}".format(mean, std))
-        # if np.isnan(std):
-        #     pass
-        # else:
-        #     data = (data - mean) / (std + 0.00001)
-
         return data
 
     def _read_observation(self):
@@ -608,9 +630,9 @@ class CarlaEnv(gym.Env):
         if self.config["enable_planner"]:
             next_command = COMMANDS_ENUM[
                 self.config_planner.get_next_command(
-                    [current_measurement.transform.location.x, current_measurement.transform.location.y, current_measurement.transform.location.z],
+                    [current_measurement.transform.location.x, current_measurement.transform.location.y, 0.22],
                     [current_measurement.transform.orientation.x, current_measurement.transform.orientation.y, current_measurement.transform.orientation.z],
-                    [self.end_pos.location.x, self.end_pos.location.y, self.end_pos.location.z],
+                    [self.end_pos.location.x, self.end_pos.location.y, 0.22],
                     [self.end_pos.orientation.x, self.end_pos.orientation.y, self.end_pos.orientation.z])
             ]
         else:
@@ -620,9 +642,9 @@ class CarlaEnv(gym.Env):
             distance_to_goal = 0.0  # avoids crash in planner
         elif self.config["enable_planner"]:
             distance_to_goal = self.config_planner.get_shortest_path_distance(
-                [current_measurement.transform.location.x, current_measurement.transform.location.y, current_measurement.transform.location.z],
+                [current_measurement.transform.location.x, current_measurement.transform.location.y, 0.22],
                 [current_measurement.transform.orientation.x, current_measurement.transform.orientation.y, current_measurement.transform.orientation.z],
-                [self.end_pos.location.x, self.end_pos.location.y, self.end_pos.location.z],
+                [self.end_pos.location.x, self.end_pos.location.y, 0.22],
                 [self.end_pos.orientation.x, self.end_pos.orientation.y, self.end_pos.orientation.z])
         else:
             distance_to_goal = -1
@@ -633,7 +655,7 @@ class CarlaEnv(gym.Env):
 
         result = {
             "episode_id": self.episode_id,
-            "global_step": self.global_steps,
+            "game_timestamp": measurements.game_timestamp,
             "agent_location_x": current_measurement.transform.location.x,
             "agent_location_y": current_measurement.transform.location.y,
             "agent_orientation_x": current_measurement.transform.orientation.x,
@@ -647,7 +669,6 @@ class CarlaEnv(gym.Env):
             "intersection_offroad": current_measurement.intersection_offroad,
             "intersection_otherlane": current_measurement.intersection_otherlane,
             "weather": self.weather,
-            "map": self.config["server_map"],
             "start_coord": self.start_coord,
             "end_coord": self.end_coord,
             "current_scenario": self.scenario,
@@ -655,7 +676,6 @@ class CarlaEnv(gym.Env):
             "image_y_res": self.config["image_y_res"],
             "num_vehicles": self.scenario["num_vehicles"],
             "num_pedestrians": self.scenario["num_pedestrians"],
-            "max_steps": self.scenario["max_steps"],
             "next_command": next_command,
         }
 
@@ -688,21 +708,14 @@ class CarlaEnv(gym.Env):
         prev_otherlane = self.prev_measurement["intersection_otherlane"]
 
         # if self.config["verbose"]:
-        DEBUG_PRINT("Current distance to goal {}, Previous distance to goal {}".format(cur_dist, prev_dist))
+        # DEBUG_PRINT("Current distance to goal {}, Previous distance to goal {}".format(cur_dist, prev_dist))
 
         # Distance travelled toward the goal in m
         # constarined into [-1000, +10], because sometimes the agent dosn't follow the direction command, so we give him a big penalty
-        reward += REWARD_ASSIGN_PARAMETERS["location_coefficient"] * np.clip((prev_dist - cur_dist), -100.0, 10.0)
+        reward += REWARD_ASSIGN_PARAMETERS["location_coefficient"] * np.clip((prev_dist - cur_dist), -10.0, 10.0)
 
         # Change in speed (km/hr)
         # limit speed less than 30km/h
-        # 如果超速了，则把reward换做负号
-        # if current_measurement["is_overspeed"]:
-        #     reward -= REWARD_ASSIGN_PARAMETERS["speed_coefficient"] * (
-        #             current_measurement["agent_forward_speed"] - self.prev_measurement["agent_forward_speed"])
-        # else:
-        #     reward += REWARD_ASSIGN_PARAMETERS["speed_coefficient"] * (
-        #             current_measurement["agent_forward_speed"] - self.prev_measurement["agent_forward_speed"])
         reward += REWARD_ASSIGN_PARAMETERS["speed_coefficient"] * (cur_speed - prev_speed - 0.1)  # -0.1是为了防止agent停在原地不动
         # if self.config["verbose"]:
         # DEBUG_PRINT("Current speed {}, Previous speed {}".format(cur_speed, prev_speed))
