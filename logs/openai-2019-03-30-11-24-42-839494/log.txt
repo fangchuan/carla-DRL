@@ -1,3 +1,0 @@
-Logging to logs/openai-2019-03-30-11-24-42-839494
-scaling actions by [1. 1.] before executing in env
-Loaded model from trained_models/carla-ddpg-model-2019-03-29-11.ckpt

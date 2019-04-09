@@ -1,4 +1,0 @@
-Logging to logs/openai-2019-03-27-14-44-13-763807
- the network use 2216843.0 varibales
-Loaded model from trained_models/carla-dqn-model-2019-03-26-21.ckpt
-Running trained model

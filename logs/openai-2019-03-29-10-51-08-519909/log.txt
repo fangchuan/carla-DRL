@@ -1,2 +1,0 @@
-Logging to logs/openai-2019-03-29-10-51-08-519909
-scaling actions by [1. 1.] before executing in env
