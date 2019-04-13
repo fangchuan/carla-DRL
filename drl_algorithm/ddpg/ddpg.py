@@ -5,23 +5,23 @@ import sys
 import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
-
+from baselines.common.schedules import LinearSchedule
 from datetime import datetime
 from collections import deque
 from environment import carla_gym
 from utils.common import get_vars, count_vars
-from utils.replay_buffer import ReplayBuffer
+from utils.replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
 from utils import logger
 from utils.common import save_variables, load_variables, batch_norm
 from .noise import NormalActionNoise, AdaptiveParamNoiseSpec, OrnsteinUhlenbeckActionNoise
 
+
 # put the batch_normal layer behind the activation layer
 def base_network(x, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_batch_normal=True):
-
     batch_train = tf.constant(True, dtype=tf.bool)
 
     out = tf.cast(x, dtype=tf.float32) / 255.0
-    
+
     out = layers.conv2d(out, 32, kernel_size=[8, 8], stride=4, padding='SAME', activation_fn=activation)
     if use_batch_normal:
         out = batch_norm(out, train=batch_train, name="conv0_bn")
@@ -35,11 +35,14 @@ def base_network(x, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_bat
     out = reshape
     return out
 
+
 # put batch_normal before the last activation layer
-def actor_network(observations, num_actions, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_batch_normal=True):
+def actor_network(observations, num_actions, activation=tf.nn.relu, output_activation=tf.nn.tanh,
+                  use_batch_normal=True):
     batch_train = tf.constant(True, dtype=tf.bool)
 
-    x = base_network(observations, activation=activation, output_activation=output_activation, use_batch_normal=use_batch_normal)
+    x = base_network(observations, activation=activation, output_activation=output_activation,
+                     use_batch_normal=use_batch_normal)
     x = layers.fully_connected(x, 128, activation_fn=None)
     # x = layers.layer_norm(x, scale=True, center=True, activation_fn=activation)
     x = batch_norm(x, train=batch_train, name="actor_fc0_bn")
@@ -49,10 +52,10 @@ def actor_network(observations, num_actions, activation=tf.nn.relu, output_activ
     x = output_activation(x)
     return x
 
-def critic_network(observations, actions, activation=tf.nn.relu, output_activation=tf.nn.relu, use_batch_normal=True):
-    
 
-    x = base_network(observations, activation=activation, output_activation=output_activation, use_batch_normal=use_batch_normal)
+def critic_network(observations, actions, activation=tf.nn.relu, output_activation=tf.nn.relu, use_batch_normal=True):
+    x = base_network(observations, activation=activation, output_activation=output_activation,
+                     use_batch_normal=use_batch_normal)
     # print("action shape: ", actions.get_shape().as_list())
     actions_dense = layers.fully_connected(actions, 128, activation_fn=activation)
     x = tf.concat([x, actions_dense], axis=-1)  # this assumes observation and action can be concatenated
@@ -61,8 +64,8 @@ def critic_network(observations, actions, activation=tf.nn.relu, output_activati
     # x = output_activation(x)
     return x
 
-def actor_critic_network(observations, actions, activation=tf.nn.relu, output_activation=tf.nn.tanh):
 
+def actor_critic_network(observations, actions, activation=tf.nn.relu, output_activation=tf.nn.tanh):
     num_actions = actions.shape.as_list()[-1]
 
     with tf.variable_scope('pi'):
@@ -76,21 +79,24 @@ def actor_critic_network(observations, actions, activation=tf.nn.relu, output_ac
         # print(q_pi.op.name, q_pi.get_shape().as_list())
     return pi, q, q_pi
 
+
 """
 
 Deep Deterministic Policy Gradient (DDPG)
 
 """
+
+
 def ddpg(env,
          session=tf.get_default_session(),
          seed=0,
          use_action_noise=True,
          use_param_noise=False,
-         use_non_zero_terminal_state = False,
+         use_non_zero_terminal_state=False,
          noise_std=0.2,
          replay_size=int(1e4),
          gamma=0.99,
-         total_steps = 1000000,
+         total_steps=1000000,
          steps_per_epoch=5000,
          polyak=0.995,
          pi_lr=1e-3,
@@ -100,9 +106,13 @@ def ddpg(env,
          max_each_epoch_len=1000,
          save_freq=1,
          model_file_load_path=None,
-         model_file_save_path=None
+         model_file_save_path=None,
+         use_prioritized_replay=True,
+         prioritized_replay_alpha=0.6,
+         prioritized_replay_beta0=0.4,
+         prioritized_replay_beta_iters=None,
+         prioritized_replay_eps=1e-6,
          ):
-
     tf.set_random_seed(seed)
     np.random.seed(seed)
 
@@ -124,22 +134,14 @@ def ddpg(env,
     done_ph = tf.placeholder(tf.float32, shape=(None, 1), name='done')
     rewards_ph = tf.placeholder(tf.float32, shape=(None, 1), name='rewards')
     actions_ph = tf.placeholder(tf.float32, shape=(None,) + action_shape, name='actions')
+    importance_weight_ph = tf.placeholder(tf.float32, shape=(None, 1), name="importanceWeight")
 
-    # action_throttle_noise = None
-    # action_steer_noise = None
     action_noise = None
     param_noise = None
     if use_action_noise:
         action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(number_actions),
                                                     sigma=float(noise_std) * np.ones(number_actions))
-        # action_throttle_noise = OrnsteinUhlenbeckActionNoise(mu=np.ones(number_actions-1)*0.5,
-        #                                             sigma=float(noise_std) * np.ones(number_actions-1))
-        # action_steer_noise_0 = OrnsteinUhlenbeckActionNoise(mu=np.ones(number_actions-1)*(-0.9),
-        #                                             sigma=float(noise_std) * np.ones(number_actions-1))
-        # action_steer_noise_1 = OrnsteinUhlenbeckActionNoise(mu=np.ones(number_actions-1)*(0.9),
-        #                                             sigma=float(noise_std) * np.ones(number_actions-1))
-        # action_steer_noise_2 = OrnsteinUhlenbeckActionNoise(mu=np.zeros(number_actions-1),
-        #                                             sigma=float(noise_std) * np.ones(number_actions-1))
+
     elif use_param_noise:
         param_noise = AdaptiveParamNoiseSpec(initial_stddev=float(noise_std), desired_action_stddev=float(noise_std))
     else:
@@ -156,7 +158,15 @@ def ddpg(env,
         pi_targ, _, q_pi_targ = actor_critic_network(obs1_ph, actions_ph)
 
     # Experience buffer
-    replay_buffer = ReplayBuffer(replay_size)
+    if use_prioritized_replay:
+        replay_buffer = PrioritizedReplayBuffer(size=replay_size, alpha=prioritized_replay_alpha)
+        if prioritized_replay_beta_iters is None:
+            prioritized_replay_beta_iters = total_steps
+        beta_schedule = LinearSchedule(prioritized_replay_beta_iters,
+                                       initial_p=prioritized_replay_beta0,
+                                       final_p=1.0)
+    else:
+        replay_buffer = ReplayBuffer(replay_size)
 
     # Count variables
     var_counts = tuple(count_vars(scope) for scope in ['main/pi', 'main/q', 'main'])
@@ -172,7 +182,7 @@ def ddpg(env,
     pi_loss = -tf.reduce_mean(q_pi)
     td_error = q - target_q
     from utils.common import huber_loss
-    q_loss = tf.reduce_mean( huber_loss(td_error) )
+    q_loss = tf.reduce_mean(importance_weight_ph * huber_loss(td_error))
 
     # Separate train ops for pi, q
     pi_optimizer = tf.train.AdamOptimizer(learning_rate=pi_lr)
@@ -189,7 +199,6 @@ def ddpg(env,
     target_init = tf.group([tf.assign(v_targ, v_main)
                             for v_main, v_targ in zip(get_vars('main'), get_vars('target'))])
 
-
     session.run(tf.global_variables_initializer())
     # 如果存在模型文件则加载model
     if model_file_load_path is not None:
@@ -201,17 +210,14 @@ def ddpg(env,
 
     session.run(target_init)
 
-    # Setup model saving
-    # logger.setup_tf_saver(sess, inputs={'x': obs0_ph, 'a': actions_ph}, outputs={'pi': pi, 'q': q})
-
-    each_epoch_rewards = 0   #每一epoch的累计reward
-    each_epoch_length = 0    #每一epoch的总步数
-    epoch_rewards = deque(maxlen=100)  #记录每一幕的累计回报
-    epoch_steps = deque(maxlen=100)  #记录每一幕的累计步数
-    epoch_actions = deque(maxlen=100)  #记录actor生成的action
-    epoch_qs = deque(maxlen=100)     #记录所有的q值
-    epoch_actor_losses = deque(maxlen=100)  #记录actor网络的损失值
-    epoch_critic_losses = deque(maxlen=100)  #记录critic网络的损失值
+    each_epoch_rewards = 0  # 每一epoch的累计reward
+    each_epoch_length = 0  # 每一epoch的总步数
+    epoch_rewards = deque(maxlen=100)  # 记录每一幕的累计回报
+    epoch_steps = deque(maxlen=100)  # 记录每一幕的累计步数
+    epoch_actions = deque(maxlen=100)  # 记录actor生成的action
+    epoch_qs = deque(maxlen=100)  # 记录所有的q值
+    epoch_actor_losses = deque(maxlen=100)  # 记录actor网络的损失值
+    epoch_critic_losses = deque(maxlen=100)  # 记录critic网络的损失值
     test_epoch_rewards = deque(maxlen=100)
     test_epoch_steps = deque(maxlen=100)
     saved_mean_reward = None
@@ -222,9 +228,6 @@ def ddpg(env,
     observation = train_env.reset_env()
 
     # 获取actor网络动作
-    AXIS_ROW = 0
-    THROTTLE_INDEX = 0
-    STEER_INDEX = 1
     def get_action(observation, apply_noise=True):
 
         actions = session.run(pi, feed_dict={obs0_ph: [observation]})
@@ -232,19 +235,6 @@ def ddpg(env,
         a = actions[0]
         epoch_actions.append(a)
         if action_noise is not None and apply_noise:
-            # mean_action = np.mean(epoch_actions, axis=AXIS_ROW)
-            # if mean_action[STEER_INDEX] < -0.5:
-            #     action_steer_noise = action_steer_noise_1
-            # elif mean_action[STEER_INDEX] > 0.5:
-            #     action_steer_noise = action_steer_noise_0
-            # else:
-            #     action_steer_noise = action_steer_noise_2
-            # noise_throttle = action_throttle_noise()
-            # noise_steer = action_steer_noise()
-            # print("throttle noise: ", noise_throttle)
-            # print("steer noise: ", noise_steer)
-            # a[THROTTLE_INDEX] += noise_throttle
-            # a[STEER_INDEX] += noise_steer
             noise = action_noise()
             assert noise.shape == a.shape
             a += noise
@@ -302,20 +292,33 @@ def ddpg(env,
 
         # 在每次运动轨迹结束或者到达 steps == max_each_epoch_len时进行DDPG网络更新
         if done or (each_epoch_length == max_each_epoch_len):
-
             for _ in range(each_epoch_length):
-                batch_obs0, batch_actions, batch_rewards, batch_obs1, batch_done = replay_buffer.sample(batch_size)
-                feed_dict = {obs0_ph: batch_obs0,
-                             obs1_ph: batch_obs1,
-                             actions_ph: batch_actions,
-                             rewards_ph: batch_rewards,
-                             done_ph: batch_done.astype('float32')
-                             }
+                if not use_prioritized_replay:
+                    batch_obs0, batch_actions, batch_rewards, batch_obs1, batch_done = replay_buffer.sample(batch_size)
+                    feed_dict = {obs0_ph: batch_obs0,
+                                 obs1_ph: batch_obs1,
+                                 actions_ph: batch_actions,
+                                 rewards_ph: batch_rewards,
+                                 done_ph: batch_done.astype('float32'),
+                                 importance_weight_ph: np.ones_like(batch_rewards)
+                                 }
+                else:
+                    experience = replay_buffer.sample(batch_size, beta=beta_schedule.value(step))
+                    (batch_obs0, batch_actions, batch_rewards, batch_obs1, batch_done, batch_weights,
+                     batch_idxes) = experience
+                    feed_dict = {obs0_ph: batch_obs0,
+                                 obs1_ph: batch_obs1,
+                                 actions_ph: batch_actions,
+                                 rewards_ph: batch_rewards,
+                                 done_ph: batch_done.astype('float32'),
+                                 importance_weight_ph: batch_weights
+                                 }
 
                 # Q-learning update
-                Q_loss, Q_value, Q_pi, _ = session.run([q_loss, q, q_pi, train_q_op], feed_dict)
-                # print("Q value: ", Q_value)
-                # print("Q value of pi: ", Q_pi)
+                Q_loss, Q_value, td_errors, _ = session.run([q_loss, q, td_error, train_q_op], feed_dict)
+                if use_prioritized_replay:
+                    new_priorities = np.abs(td_errors) + prioritized_replay_eps
+                    replay_buffer.update_priorities(batch_idxes, new_priorities)
                 epoch_critic_losses.append(Q_loss)
                 epoch_qs.append(Q_value)
 
@@ -337,7 +340,7 @@ def ddpg(env,
 
             # Test the performance of the deterministic version of the agent.
             test_agent()
-            
+
             mean_100ep_reward = np.mean(epoch_rewards)
             mean_100ep_steps = np.mean(epoch_steps)
             test_ep_reward = np.mean(test_epoch_rewards)
@@ -349,10 +352,11 @@ def ddpg(env,
 
             # Save model
             if (epoch % save_freq == 0) or (epoch == epochs - 1):
-                if (saved_mean_reward is None or test_ep_reward > saved_mean_reward):
-                    logger.log("Saving model due to mean reward increase: {} -> {}".format(saved_mean_reward, test_ep_reward))
-                    save_variables(model_file_save_path)
-                    saved_mean_reward = test_ep_reward
+               # if (saved_mean_reward is None or test_ep_reward > saved_mean_reward):
+               logger.log(
+                        "Saving model due to mean reward increase: {} -> {}".format(saved_mean_reward, test_ep_reward))
+               save_variables(model_file_save_path)
+               saved_mean_reward = test_ep_reward
 
             # Log info about epoch
             logger.record_tabular("epoch", epoch)
