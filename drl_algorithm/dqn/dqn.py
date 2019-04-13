@@ -81,7 +81,7 @@ def dqn(env,
         total_step_numbers=1000000,
         gamma=0.99,
         lr = 5e-4,
-        replay_buffer=10000,
+        replay_buffer_size=10000,
         prioritized_replay=False,
         batch_size=64,
         exploration_steps=10000,
@@ -92,7 +92,13 @@ def dqn(env,
         checkpoints_freq=20,
         scope='deepq',
         model_file_load_path=None,
-        model_file_save_path=None):
+        model_file_save_path=None,
+        use_prioritized_replay=True,
+        prioritized_replay_alpha=0.6,
+        prioritized_replay_beta0=0.4,
+        prioritized_replay_beta_iters=None,
+        prioritized_replay_eps=1e-6,
+         ):
 
 
     episodes = 0           #记录episode number
@@ -115,17 +121,15 @@ def dqn(env,
     )
 
     # Create the replay buffer
-    replay_buffer = ReplayBuffer(replay_buffer)
-    # prioritized_replay_alpha = 0.6
-    # prioritized_replay_beta0 = 0.4
-    # prioritized_replay_beta_iters = None
-    # prioritized_replay_eps = 1e-6
-    # replay_buffer = PrioritizedReplayBuffer(EXPERIENCE_REPLAY_BUFFER_SIZE, alpha=prioritized_replay_alpha)
-    # if prioritized_replay_beta_iters is None:
-    #     prioritized_replay_beta_iters = args.total_steps_num
-    # beta_schedule = LinearSchedule(prioritized_replay_beta_iters,
-    #                                initial_p=prioritized_replay_beta0,
-    #                                final_p=1.0)
+    if not use_prioritized_replay:
+        replay_buffer = ReplayBuffer(replay_buffer_size)
+    else:
+        replay_buffer = PrioritizedReplayBuffer(replay_buffer_size, alpha=prioritized_replay_alpha)
+        if prioritized_replay_beta_iters is None:
+            prioritized_replay_beta_iters = total_step_numbers
+        beta_schedule = LinearSchedule(prioritized_replay_beta_iters,
+                                    initial_p=prioritized_replay_beta0,
+                                    final_p=1.0)
     # Create the schedule for exploration starting from 1 (every action is random) down to
     # 0.02 (98% of actions are selected according to values predicted by the model).
     exploration = LinearSchedule(schedule_timesteps=exploration_steps,
@@ -169,14 +173,16 @@ def dqn(env,
 
         # Minimize the error in Bellman's equation on a batch sampled from replay buffer.
         if step > start_steps:
-            obses_t, actions, rewards, obses_tp1, dones = replay_buffer.sample(batch_size)
-            td_errors = train(obses_t, actions, rewards, obses_tp1, dones, np.ones_like(rewards))
-            # experience = replay_buffer.sample(SAMPLE_BATCH_SIZE, beta=beta_schedule.value(step))
-            # (obses_t, actions, rewards, obses_tp1, dones, weights, batch_idxes) = experience
-            #
-            # td_errors = train(obses_t, actions, rewards, obses_tp1, dones, weights)
-            # new_priorities = np.abs(td_errors) + prioritized_replay_eps
-            # replay_buffer.update_priorities(batch_idxes, new_priorities)
+            if not use_prioritized_replay:
+                obses_t, actions, rewards, obses_tp1, dones = replay_buffer.sample(batch_size)
+                td_errors = train(obses_t, actions, rewards, obses_tp1, dones, np.ones_like(rewards))
+            else:
+                experience = replay_buffer.sample(batch_size, beta=beta_schedule.value(step))
+                (obses_t, actions, rewards, obses_tp1, dones, weights, batch_idxes) = experience
+                
+                td_errors = train(obses_t, actions, rewards, obses_tp1, dones, weights)
+                new_priorities = np.abs(td_errors) + prioritized_replay_eps
+                replay_buffer.update_priorities(batch_idxes, new_priorities)
 
             # Update target network periodically.
             if step % update_target_freq == 0:

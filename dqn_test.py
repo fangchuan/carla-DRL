@@ -98,7 +98,7 @@ def main(arg):
                         total_step_numbers=total_step_numbers,
                         gamma=GAMMA,
                         lr=LEARN_RATE,
-                        replay_buffer=EXPERIENCE_REPLAY_BUFFER_SIZE,
+                        replay_buffer_size=EXPERIENCE_REPLAY_BUFFER_SIZE,
                         batch_size=SAMPLE_BATCH_SIZE,
                         exploration_steps=EPSILON_EXPLORATION_TIMESTEPS,
                         init_epsilon=INITIAL_EPSILON,
