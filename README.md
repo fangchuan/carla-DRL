@@ -48,3 +48,7 @@
 2019-03-27: 在DQN中加BN, 快速收敛，但是一段时间后mean_100ep_reward出现下降...,原因到底是啥? 我BN用的不对?
 
 2019-3-30:  environment/carla_gym/env/carla换用carla-0.8.4 API;
+
+2019-04-09: ddpg采用prioritized experience replay, 6W步内完成直线任务;
+
+2019-04-13: dqn也采用prioritized experience replay;

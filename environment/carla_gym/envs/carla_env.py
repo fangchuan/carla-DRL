@@ -78,6 +78,7 @@ import numpy as np
 from collections import deque
 from datetime import datetime
 from gym.spaces import Box, Discrete, Tuple
+from utils import logger
 from utils.common import DEBUG_PRINT
 
 # Set this to the path to your Carla binary
@@ -131,7 +132,7 @@ scenario_config['weather_distribution'] = weathers
 
 # Default environment configuration
 ENVIRONMENT_CONFIG = {
-    "discrete_actions": False,
+    "discrete_actions": True,
     "use_gray_or_depth_image":True,
     "use_image_only_observations": True,  # Exclude high-level planner inputs & goal info from the observations
     "server_map": "/Game/Maps/" + scenario_config["city"][0], # Town01
@@ -510,15 +511,11 @@ class CarlaEnv(gym.Env):
         reverse = False
         hand_brake = False
 
-        # prevent braking
-        # if brake < 0.1 or throttle > brake:
-        #     brake = 0
-
         # prevent over speeding
         if self.prev_measurement['agent_forward_speed'] * 3.6 > MAX_SPEED_LIMIT :
             throttle = 0.0
-        # if self.config["verbose"]:
-        #DEBUG_PRINT("steer = ", steer, " throttle =", throttle, " brake = ", brake)
+        if self.config["verbose"]:
+            DEBUG_PRINT("steer = ", steer, " throttle =", throttle, " brake = ", brake)
 
         self.client.send_control( steer=steer, throttle=throttle, brake=brake,
                                     hand_brake=hand_brake, reverse=reverse)
@@ -526,8 +523,8 @@ class CarlaEnv(gym.Env):
         # Process observations
         image, py_measurements = self._read_observation()
 
-        if self.config["verbose"]:
-            DEBUG_PRINT("Next command", py_measurements["next_command"])
+        # if self.config["verbose"]:
+        DEBUG_PRINT("Next command", py_measurements["next_command"])
 
         if type(action) is np.ndarray:
             py_measurements["action"] = [float(a) for a in action]
@@ -541,7 +538,7 @@ class CarlaEnv(gym.Env):
                                       "hand_brake": hand_brake}
 
         # reward = self.calculate_reward(py_measurements)
-        delta_distance = py_measurements["distance_to_goal"] - self.prev_measurement["distance_to_goal"]
+        delta_distance = self.prev_measurement["distance_to_goal"] - py_measurements["distance_to_goal"]
         is_rush_wrong_way = delta_distance < -100
         distance_reward = np.clip(delta_distance, a_min=-10, a_max=10)
         speed_reward = py_measurements["agent_forward_speed"] - 1
@@ -554,12 +551,13 @@ class CarlaEnv(gym.Env):
                  - (py_measurements["intersection_offroad"] * 5) \
                  - is_collision * 100 \
                  - np.abs(steer) * 10
+        if is_rush_wrong_way:
+            logger.log("Have rush into the wrong way!!!!!: ")
         DEBUG_PRINT("delta distance: ", delta_distance)
-        DEBUG_PRINT("reward: ", reward)
-        self.total_reward += reward
 
-        if self.config["verbose"]:
-            DEBUG_PRINT("Current total reward {:+.2f}".format(self.total_reward))
+        self.total_reward += reward
+        # if self.config["verbose"]:
+        DEBUG_PRINT("Current total reward {:+.2f}".format(self.total_reward))
 
         py_measurements["reward"] = reward
         py_measurements["total_reward"] = self.total_reward
