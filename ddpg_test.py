@@ -9,6 +9,7 @@ from utils import logger
 from utils.common import MaxAndSkipEnv
 from datetime import datetime
 from drl_algorithm.ddpg import ddpg
+from environment import carla_gym
 
 # from knockknock import email_sender
 # @email_sender(recipient_email="1457737815@qq.com", sender_email="fang1457737815@gmail.com")
@@ -26,10 +27,10 @@ def main(argvs):
     NOISE_STDDEV = 0.2
     ACTOR_LEARN_RATE = 1e-4
     CRITIC_LEARN_RATE = 1e-3
-    REPLAY_BUFFER_SIZE = 5e4
+    REPLAY_BUFFER_SIZE = 1e5
     GAMMA = 0.99
-    BATCH_SIZE = 100
-    TARGET_UPDATE_POLYAK = 0.995
+    BATCH_SIZE = 64
+    TARGET_UPDATE_POLYAK = 0.999
     START_STEPS = 1e3
 
     logger.configure()
@@ -41,7 +42,7 @@ def main(argvs):
 
         env = gym.make('Carla-v0')
         # 将env设置为SkipEnv, 返回MaxObservation, total_reward
-        env = MaxAndSkipEnv(env, skip=MAX_SKIP_FRAMES)
+        #env = MaxAndSkipEnv(env, skip=MAX_SKIP_FRAMES, use_image_only_observation=False)
 
         if not os.path.exists(model_file_save_path):
             os.makedirs(model_file_save_path, exist_ok=True)
@@ -68,7 +69,6 @@ def main(argvs):
             logger.log("Running DDPG trained model")
             obs = env.reset()
             max_action = np.array(env.action_space.high)
-            print("max action : ", max_action)
             steps = 0
             while True:
                 action = action_fn(obs, apply_noise=False)

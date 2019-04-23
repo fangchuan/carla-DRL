@@ -52,3 +52,11 @@
 2019-04-09: ddpg采用prioritized experience replay, 6W步内完成直线任务;
 
 2019-04-13: dqn也采用prioritized experience replay;
+            9点在拐弯任务(138,17) 上测试ddpg，路况比较复杂，不成功，18点换简单的拐弯任务(47,16)试试;
+
+2019-04-15: ddpg在拐弯任务中会出现不收敛现象,但q_value会一直增高,相应的actor_loss也一直增大,但是学到的动作却都是刹车,为什么此时的q值还能增大呢???
+
+2019-04-17: ddpg critic网络更新两次，actor网络更新一次，不会再出现q值过估计现象;
+            measurement data = [one_hot(next_command), forward_speed, distance_to_goal, collsioin],训练80W步还是不收敛，没学会拐弯;
+
+2019-04-22:  measurement data = [next_command, distance_to_goal,forward_speed, location_x,location_y]

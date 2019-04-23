@@ -22,8 +22,8 @@
 
   "Lane_Keep_Town1": {
     "city": "Town01",
-    "start_pos_id": 36,
-    "end_pos_id": 40,
+    "start_pos_id": 47,
+    "end_pos_id": 16,
     "num_vehicles": 55,
     "num_pedestrians": 30,
     "weather_distribution": [1],

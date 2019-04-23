@@ -200,12 +200,18 @@ class MaxAndSkipEnv(gym.Wrapper):
     '''
        skip 若干 frames, 并挑选这些frames中max_observation 和 total_reward 返回
     '''
-    def __init__(self, env, skip=4):
+    def __init__(self, env, skip=4, use_image_only_observation=True):
         """Return only every `skip`-th frame"""
         gym.Wrapper.__init__(self, env)
         # most recent raw observations (for max pooling across time steps)
-        self._obs_buffer = np.zeros((2,)+env.observation_space.shape, dtype=np.uint8)
+        if use_image_only_observation:
+            self._obs_image_buffer = np.zeros((2,)+env.observation_space.shape, dtype=np.uint8)
+        else:
+            self._obs_image_buffer = np.zeros((2,)+env.observation_space.spaces[0].shape, dtype=np.uint8)
+            self._obs_measurement_buffer = np.zeros(env.observation_space.spaces[1].shape, dtype=np.float32)
+
         self._skip       = skip
+        self._use_image_only_obs = use_image_only_observation
 
     def step(self, action):
         """Repeat action, sum reward, and max over last observations."""
@@ -213,16 +219,32 @@ class MaxAndSkipEnv(gym.Wrapper):
         done = None
         for i in range(self._skip):
             obs, reward, done, info = self.env.step(action)
-            if i == self._skip - 2: self._obs_buffer[0] = obs
-            if i == self._skip - 1: self._obs_buffer[1] = obs
+
+            if i == self._skip - 2:
+                if self._use_image_only_obs:
+                    self._obs_image_buffer[0] = obs
+                else:
+                    self._obs_image_buffer[0] = obs[0]
+
+            if i == self._skip - 1:
+                if self._use_image_only_obs:
+                    self._obs_image_buffer[1] = obs
+                else:
+                    self._obs_image_buffer[1] = obs[0]
+                    self._obs_measurement_buffer = obs[1]
+
             total_reward += reward
             if done:
                 break
         # Note that the observation on the done=True frame
         # doesn't matter
-        max_frame = self._obs_buffer.max(axis=0)
+        max_frame = self._obs_image_buffer.max(axis=0)
+        if self._use_image_only_obs:
+            observation = max_frame
+        else:
+            observation = (max_frame, self._obs_measurement_buffer)
 
-        return max_frame, total_reward, done, info
+        return observation, total_reward, done, info
 
     def reset(self, **kwargs):
         return self.env.reset(**kwargs)

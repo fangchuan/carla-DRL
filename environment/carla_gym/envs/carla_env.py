@@ -55,6 +55,8 @@
     2019-03-28:   1.0.0       collision_coefficient=-0.002;
                               MAX_SPEED_LIMIT=35 km/h,超速则设置throttle=0;
                               early_terminate_on_collision=True, distance_reward范围[-100,10]
+    2019-04-17:   1.0.0       修改observation_space=Tuple(image_space, measurements_space),measurements_space.shape=(8,)
+    2019-04-22:   1.0.0       measurements_space.shape=(5,): next_command,distance_to_goal,forward_speed,location_x,location_y
 
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
@@ -132,9 +134,9 @@ scenario_config['weather_distribution'] = weathers
 
 # Default environment configuration
 ENVIRONMENT_CONFIG = {
-    "discrete_actions": True,
+    "discrete_actions": False,
     "use_gray_or_depth_image":True,
-    "use_image_only_observations": True,  # Exclude high-level planner inputs & goal info from the observations
+    "use_image_only_observations": False,  # Exclude high-level planner inputs & goal info from the observations
     "server_map": "/Game/Maps/" + scenario_config["city"][0], # Town01
     "scenarios": scenario_config["Lane_Keep_Town1"], #[scenario_config["Lane_Keep_Town1"],scenario_config["Lane_Keep_Town2"]],
     "use_random_position_points": False,
@@ -269,8 +271,7 @@ class CarlaEnv(gym.Env):
         else:
             self.observation_space = Tuple(
                 [image_space,
-                 Discrete(len(COMMANDS_ENUM)),  # next_command
-                 Box(low=-128.0, high=128.0, shape=(2,), dtype=np.float32)])  # forward_speed, dist to goal
+                 Box(low=-1024, high=1024, shape=(5,), dtype=np.int16)])  # higher_command,forward_speed, dist_to_goal, CURRENT_LOCATION
 
         self._spec = lambda: None
         self._spec.id = "Carla-v0"
@@ -478,10 +479,13 @@ class CarlaEnv(gym.Env):
         if self.config["use_image_only_observations"]:
             obs = images
         else:
-            obs = (
-                images,
-                COMMAND_ORDINAL[py_measurements["next_command"]],
-                [py_measurements["agent_forward_speed"], py_measurements["distance_to_goal"]])
+            measurements = []
+            measurements.append(COMMAND_ORDINAL[py_measurements["next_command"]])
+            measurements.append(int(py_measurements["distance_to_goal"]))
+            measurements.append((int(py_measurements["agent_forward_speed"])))
+            measurements.append(int(py_measurements['agent_location_x']))
+            measurements.append(int(py_measurements['agent_location_y']))
+            obs = (images, measurements)
         self.last_obs = obs
         return obs
 
@@ -544,7 +548,7 @@ class CarlaEnv(gym.Env):
         speed_reward = py_measurements["agent_forward_speed"] - 1
         if speed_reward > 30.:
             speed_reward = 30.0
-        is_collision = check_collision(py_measurements) or is_rush_wrong_way
+        is_collision = check_collision(py_measurements)
         reward = distance_reward \
                  +  speed_reward \
                  - (py_measurements["intersection_otherlane"] * 5) \
@@ -553,7 +557,7 @@ class CarlaEnv(gym.Env):
                  - np.abs(steer) * 10
         if is_rush_wrong_way:
             logger.log("Have rush into the wrong way!!!!!: ")
-        DEBUG_PRINT("delta distance: ", delta_distance)
+        DEBUG_PRINT("distance_to_goal: ", py_measurements["distance_to_goal"])
 
         self.total_reward += reward
         # if self.config["verbose"]:
@@ -564,7 +568,7 @@ class CarlaEnv(gym.Env):
 
         done = ( py_measurements["game_timestamp"] > self.scenario["episode_max_time"] or
             py_measurements["next_command"] == "REACH_GOAL" or
-            py_measurements["intersection_offroad"] > MAX_OFFROAD_DEGREE or
+            # py_measurements["intersection_offroad"] > MAX_OFFROAD_DEGREE or
             is_rush_wrong_way  or
             (self.config["early_terminate_on_collision"] and check_collision(py_measurements)))
 
@@ -628,9 +632,9 @@ class CarlaEnv(gym.Env):
         if self.config["enable_planner"]:
             next_command = COMMANDS_ENUM[
                 self.config_planner.get_next_command(
-                    [current_measurement.transform.location.x, current_measurement.transform.location.y, 0.22],
+                    [current_measurement.transform.location.x, current_measurement.transform.location.y, current_measurement.transform.location.z],
                     [current_measurement.transform.orientation.x, current_measurement.transform.orientation.y, current_measurement.transform.orientation.z],
-                    [self.end_pos.location.x, self.end_pos.location.y, 0.22],
+                    [self.end_pos.location.x, self.end_pos.location.y, self.end_pos.location.z],
                     [self.end_pos.orientation.x, self.end_pos.orientation.y, self.end_pos.orientation.z])
             ]
         else:

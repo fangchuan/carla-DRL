@@ -74,6 +74,7 @@ def q_function(inpt, num_actions, scope, reuse=False):
         out = layers.fully_connected(reshape, num_outputs=512, activation_fn=None)
         out = batch_norm(out, train=batch_train, name="fc0_bn")
         out = tf.nn.relu(out)
+        out = tf.nn.dropout(out, keep_prob=0.25)
         out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
         return out
 
