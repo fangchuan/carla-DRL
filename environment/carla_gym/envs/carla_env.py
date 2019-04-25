@@ -57,6 +57,8 @@
                               early_terminate_on_collision=True, distance_reward范围[-100,10]
     2019-04-17:   1.0.0       修改observation_space=Tuple(image_space, measurements_space),measurements_space.shape=(8,)
     2019-04-22:   1.0.0       measurements_space.shape=(5,): next_command,distance_to_goal,forward_speed,location_x,location_y
+    2019-04-23:   1.0.0       修改reward function，不使用distance_reward;
+                              start_position和end_position改为 one_turn_poses_task中的点对;
 
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
@@ -136,10 +138,10 @@ scenario_config['weather_distribution'] = weathers
 ENVIRONMENT_CONFIG = {
     "discrete_actions": False,
     "use_gray_or_depth_image":True,
-    "use_image_only_observations": False,  # Exclude high-level planner inputs & goal info from the observations
+    "use_image_only_observations": True,  # Exclude high-level planner inputs & goal info from the observations
     "server_map": "/Game/Maps/" + scenario_config["city"][0], # Town01
     "scenarios": scenario_config["Lane_Keep_Town1"], #[scenario_config["Lane_Keep_Town1"],scenario_config["Lane_Keep_Town2"]],
-    "use_random_position_points": False,
+    # "use_random_position_points": False,
     "framestack": 4,  # note: only [1, 2, 3,4] currently supported
     "enable_planner": True,
     "use_depth_camera": False,
@@ -283,13 +285,14 @@ class CarlaEnv(gym.Env):
         self.total_reward = 0
         self.prev_measurement = None
         self.images = deque([], maxlen=config["framestack"])
-        self.episode_id = None
+        self.experiment_id = None
         self.weather = None
         self.scenario = None
         self.start_pos = None
         self.end_pos = None
         self.start_coord = None
         self.end_coord = None
+        self.init_distance = 0
         self.last_obs = None
 
     def init_server(self):
@@ -377,6 +380,7 @@ class CarlaEnv(gym.Env):
     def reset_env(self):
 
         self.total_reward = 0
+        self.experiment_id = 0
         self.prev_measurement = None
         self.images.clear()
       
@@ -423,13 +427,14 @@ class CarlaEnv(gym.Env):
         scene = self.client.load_settings(settings)
         positions = scene.player_start_spots
         # 读取配置文件中的start_pos, end_pos
-        if self.config["use_random_position_points"]:
-            straight_poses_tasks_len = len(scenario_config["Straight_Poses_Town01"])
-            random_position_task = scenario_config["Straight_Poses_Town01"][np.random.randint(straight_poses_tasks_len)]
-            self.scenario["start_pos_id"] = random_position_task[0]
-            self.scenario["end_pos_id"] = random_position_task[1]
-        else:
-            pass
+        # if self.config["use_random_position_points"]:
+        #     straight_poses_tasks_len = len(scenario_config["Straight_Poses_Town01"])
+        #     random_position_task = scenario_config["Straight_Poses_Town01"][np.random.randint(straight_poses_tasks_len)]
+        #     self.scenario["start_pos_id"] = random_position_task[0]
+        #     self.scenario["end_pos_id"] = random_position_task[1]
+        # else:
+        #     pass
+
         self.start_pos = positions[self.scenario["start_pos_id"]]
         self.end_pos = positions[self.scenario["end_pos_id"]]
         self.start_coord = [self.start_pos.location.x, self.start_pos.location.y]
@@ -437,6 +442,12 @@ class CarlaEnv(gym.Env):
         DEBUG_PRINT( "Start pos {} ({}), end {} ({})".format(
                     self.scenario["start_pos_id"], self.start_coord,
                     self.scenario["end_pos_id"], self.end_coord))
+        if self.config["enable_planner"]:
+            self.init_distance = self.config_planner.get_shortest_path_distance(
+                [self.start_pos.location.x, self.start_pos.location.y, 0.22],
+                [self.start_pos.orientation.x, self.start_pos.orientation.y, self.start_pos.orientation.z],
+                [self.end_pos.location.x, self.end_pos.location.y, 0.22],
+                [self.end_pos.orientation.x, self.end_pos.orientation.y, self.end_pos.orientation.z])
         
         # Notify the server that we want to start the episode at the
         # player_start index. This function blocks until the server is ready
@@ -479,6 +490,7 @@ class CarlaEnv(gym.Env):
         if self.config["use_image_only_observations"]:
             obs = images
         else:
+            # one-hot encode the command
             measurements = []
             measurements.append(COMMAND_ORDINAL[py_measurements["next_command"]])
             measurements.append(int(py_measurements["distance_to_goal"]))
@@ -527,7 +539,7 @@ class CarlaEnv(gym.Env):
         # Process observations
         image, py_measurements = self._read_observation()
 
-        # if self.config["verbose"]:
+        #if self.config["verbose"]:
         DEBUG_PRINT("Next command", py_measurements["next_command"])
 
         if type(action) is np.ndarray:
@@ -542,22 +554,22 @@ class CarlaEnv(gym.Env):
                                       "hand_brake": hand_brake}
 
         # reward = self.calculate_reward(py_measurements)
-        delta_distance = self.prev_measurement["distance_to_goal"] - py_measurements["distance_to_goal"]
-        is_rush_wrong_way = delta_distance < -100
-        distance_reward = np.clip(delta_distance, a_min=-10, a_max=10)
+        # delta_distance = self.prev_measurement["distance_to_goal"] - py_measurements["distance_to_goal"]
+        # is_rush_wrong_way = delta_distance < -100
+        # distance_reward = np.clip(delta_distance, a_min=-10, a_max=10)
         speed_reward = py_measurements["agent_forward_speed"] - 1
         if speed_reward > 30.:
             speed_reward = 30.0
         is_collision = check_collision(py_measurements)
-        reward = distance_reward \
-                 +  speed_reward \
+        # reward = distance_reward \
+        reward =   speed_reward \
                  - (py_measurements["intersection_otherlane"] * 5) \
                  - (py_measurements["intersection_offroad"] * 5) \
                  - is_collision * 100 \
                  - np.abs(steer) * 10
-        if is_rush_wrong_way:
-            logger.log("Have rush into the wrong way!!!!!: ")
-        DEBUG_PRINT("distance_to_goal: ", py_measurements["distance_to_goal"])
+        # if is_rush_wrong_way:
+        #     logger.log("Have rush into the wrong way!!!!!: ")
+        # DEBUG_PRINT("delta distance: ", delta_distance)
 
         self.total_reward += reward
         # if self.config["verbose"]:
@@ -566,10 +578,15 @@ class CarlaEnv(gym.Env):
         py_measurements["reward"] = reward
         py_measurements["total_reward"] = self.total_reward
 
+        if py_measurements["next_command"] == "REACH_GOAL":
+            py_measurements["is_complete"] = True
+        else:
+            py_measurements["is_complete"] = False
+
         done = ( py_measurements["game_timestamp"] > self.scenario["episode_max_time"] or
-            py_measurements["next_command"] == "REACH_GOAL" or
+            # py_measurements["next_command"] == "REACH_GOAL" or
             # py_measurements["intersection_offroad"] > MAX_OFFROAD_DEGREE or
-            is_rush_wrong_way  or
+            # is_rush_wrong_way  or
             (self.config["early_terminate_on_collision"] and check_collision(py_measurements)))
 
         py_measurements["done"] = done
@@ -590,18 +607,19 @@ class CarlaEnv(gym.Env):
             # raw depth image 范围[0,1]
             data = raw_image.data * 255
             # DEBUG_PRINT("image shape: ", data.shape)
-            # 因为图片保存时x,y倒置
-            data = data.reshape(self.config["image_y_res"], self.config["image_x_res"], 1)
+            # data = data.reshape(self.config["image_y_res"], self.config["image_x_res"], 1)
             data = cv2.resize(data, (self.config["image_x_res"], self.config["image_y_res"]), interpolation=cv2.INTER_AREA) #shrink the image
 
         else:
-            data = raw_image.data.reshape(self.config["image_y_res"], self.config["image_x_res"], 3)
-
+            # data = raw_image.data.reshape(self.config["image_y_res"], self.config["image_x_res"], 3)
+            data = cv2.cvtColor(raw_image.data, cv2.COLOR_BGR2RGB)
+            # cv2.imshow(winname="raw image", mat=data)
+            # cv2.waitKey(0)
             if self.config["use_gray_or_depth_image"]:
                 data = cv2.cvtColor(data, cv2.COLOR_RGB2GRAY)
 
             data = cv2.resize(data, (self.config["image_x_res"], self.config["image_y_res"]),interpolation=cv2.INTER_AREA)
-        # cv2.imshow(winname="raw image", mat=data)
+        # cv2.imshow(winname="grey image", mat=data)
         # cv2.waitKey(0)
         data = data.astype(np.uint8)
         return data
@@ -656,13 +674,14 @@ class CarlaEnv(gym.Env):
              current_measurement.transform.location.y - self.end_pos.location.y]))
 
         result = {
-            "episode_id": self.episode_id,
+            "experiment_id": self.experiment_id,
             "game_timestamp": measurements.game_timestamp,
             "agent_location_x": current_measurement.transform.location.x,
             "agent_location_y": current_measurement.transform.location.y,
             "agent_orientation_x": current_measurement.transform.orientation.x,
             "agent_orientation_y": current_measurement.transform.orientation.y,
             "agent_forward_speed": current_measurement.forward_speed,
+            "init_distance": self.init_distance,
             "distance_to_goal": distance_to_goal,
             "distance_to_goal_euclidean": distance_to_goal_euclidean,
             "collision_vehicles": current_measurement.collision_vehicles,
@@ -673,9 +692,10 @@ class CarlaEnv(gym.Env):
             "weather": self.weather,
             "start_coord": self.start_coord,
             "end_coord": self.end_coord,
-            "current_scenario": self.scenario,
-            "image_x_res": self.config["image_x_res"],
-            "image_y_res": self.config["image_y_res"],
+            "start_point": self.scenario["start_pos_id"],
+            "end_point": self.scenario["end_pos_id"],
+            # "image_x_res": self.config["image_x_res"],
+            # "image_y_res": self.config["image_y_res"],
             "num_vehicles": self.scenario["num_vehicles"],
             "num_pedestrians": self.scenario["num_pedestrians"],
             "next_command": next_command,
