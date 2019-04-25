@@ -9,11 +9,13 @@ from utils.common import MaxAndSkipEnv
 from datetime import datetime
 from drl_algorithm.sac import sac
 from environment import carla_gym
+from utils.email_sender import email_sender
 
-
-# from knockknock import email_sender
-# @email_sender(recipient_email="1457737815@qq.com", sender_email="fang1457737815@gmail.com")
+@email_sender
 def main(argvs):
+    '''
+    sac_test.py
+    '''
     argparser = common_arg_parser()
     args = argparser.parse_args()
     model_file_save_path = args.save_path
