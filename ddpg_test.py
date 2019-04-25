@@ -10,10 +10,13 @@ from utils.common import MaxAndSkipEnv
 from datetime import datetime
 from drl_algorithm.ddpg import ddpg
 from environment import carla_gym
+from utils.email_sender import email_sender
 
-# from knockknock import email_sender
-# @email_sender(recipient_email="1457737815@qq.com", sender_email="fang1457737815@gmail.com")
+@email_sender
 def main(argvs):
+    '''
+    ddpg_test.py
+    '''
     argparser = common_arg_parser()
     args = argparser.parse_args()
     model_file_save_path = args.save_path
@@ -35,59 +38,64 @@ def main(argvs):
 
     logger.configure()
 
-
     with Util.make_session(num_cpu=8) as session:
         model_file_name = datetime.now().strftime("carla-ddpg-model-%Y-%m-%d-%H")
         model_file = model_file_name + '.ckpt'
 
         env = gym.make('Carla-v0')
         # 将env设置为SkipEnv, 返回MaxObservation, total_reward
-        #env = MaxAndSkipEnv(env, skip=MAX_SKIP_FRAMES, use_image_only_observation=False)
+        # env = MaxAndSkipEnv(env, skip=MAX_SKIP_FRAMES, use_image_only_observation=False)
 
         if not os.path.exists(model_file_save_path):
             os.makedirs(model_file_save_path, exist_ok=True)
         model_file = os.path.join(model_file_save_path, model_file)
 
         action_fn = ddpg.ddpg(env=env,
-                             session=session,
-                             seed=SEED,
-                             use_action_noise=True,
-                             use_param_noise=False,
-                             noise_std=NOISE_STDDEV,
-                             replay_size=int(REPLAY_BUFFER_SIZE),
-                             gamma=GAMMA,
-                             total_steps=int(total_step_numbers),
-                             polyak=TARGET_UPDATE_POLYAK,
-                             pi_lr=ACTOR_LEARN_RATE,
-                             q_lr=CRITIC_LEARN_RATE,
-                             batch_size=BATCH_SIZE,
-                             start_steps=START_STEPS,
-                             model_file_load_path=model_file_load_path,
-                             model_file_save_path=model_file)
+                              session=session,
+                              seed=SEED,
+                              use_action_noise=True,
+                              use_param_noise=False,
+                              noise_std=NOISE_STDDEV,
+                              replay_size=int(REPLAY_BUFFER_SIZE),
+                              gamma=GAMMA,
+                              total_steps=int(total_step_numbers),
+                              polyak=TARGET_UPDATE_POLYAK,
+                              pi_lr=ACTOR_LEARN_RATE,
+                              q_lr=CRITIC_LEARN_RATE,
+                              batch_size=BATCH_SIZE,
+                              start_steps=START_STEPS,
+                              model_file_load_path=model_file_load_path,
+                              model_file_save_path=model_file)
 
         if is_play:
             logger.log("Running DDPG trained model")
-            obs = env.reset()
-            max_action = np.array(env.action_space.high)
-            steps = 0
-            while True:
-                action = action_fn(obs, apply_noise=False)
-                print("action : ", action)
-                
-                
-                obs, reward, done, info = env.step(max_action * action)
-                done = done.any() if isinstance(done, np.ndarray) else done
-                steps += 1
+            from experiment_suit.carla_benchmark import benchmark_summary
+            TEST_EPISODES = 10
+            metrics = benchmark_summary(env, action_fn=action_fn, num_test_episodes=TEST_EPISODES, logger=logger)
+            import json
+            metrics_json = json.dumps(metrics, indent=4)
+            with open('test_ddpg_benchmark.json', 'w') as f:
+                f.write(metrics_json)
 
-                logger.record_tabular("steps", steps)
-                logger.record_tabular("rewards", reward)
-
-                if done:
-                    obs = env.reset_env()
-                    logger.dump_tabular()
+            # obs = env.reset()
+            # max_action = np.array(env.action_space.high)
+            # steps = 0
+            # while True:
+            #     action = action_fn(obs)
+            #     print("action : ", action)
+            #
+            #     obs, reward, done, info = env.step(max_action * action)
+            #     done = done.any() if isinstance(done, np.ndarray) else done
+            #     steps += 1
+            #
+            #     logger.record_tabular("steps", steps)
+            #     logger.record_tabular("rewards", reward)
+            #
+            #     if done:
+            #         obs = env.reset_env()
+            #         logger.dump_tabular()
 
         return action_fn
-
 
 
 if __name__ == '__main__':

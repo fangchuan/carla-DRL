@@ -26,6 +26,10 @@
                               想使用MPI, 发现baselines中除了dqn和trpo_mpi，其他算法训练过程均使用了mpi来vectorize environnment.
 
     2019-03-06:   1.0.0       修改q_function网络的fc1层为512
+   
+    2019-04-24：  1.0.0       REPLAY_BUFFER_SIZE=1E5, 2E5会导致内存不够;
+                              FINAL_EPSILON = 0.01, EVALUTE_EPSILON = 0.001; EXPLORATION_STEPS = 1E5;
+                              UPDATE_TARGET_FREQUENCY = 3e3;
 
 
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
@@ -46,11 +50,13 @@ from utils.common import common_arg_parser
 from utils.common import NormalizedEnv, MaxAndSkipEnv
 from utils import logger
 from drl_algorithm.dqn import dqn
+from utils.email_sender import email_sender
 
-# from knockknock import email_sender
-# @email_sender(recipient_email="1457737815@qq.com", sender_email="fang1457737815@gmail.com")
+@email_sender
 def main(arg):
-
+    '''
+    dqn_test.py
+    '''
     argparser = common_arg_parser()
     args = argparser.parse_args()
     model_file_save_path = args.save_path
@@ -74,14 +80,14 @@ def main(arg):
 
     LEARN_RATE = 5e-4
     GAMMA = 0.99
-    EXPERIENCE_REPLAY_BUFFER_SIZE = 50000
-    EPSILON_EXPLORATION_TIMESTEPS = 10000
+    EXPERIENCE_REPLAY_BUFFER_SIZE = 100000
+    EPSILON_EXPLORATION_TIMESTEPS = 100000
     INITIAL_EPSILON = 1.0
-    FINAL_EPSILON = 0.02
-    SAMPLE_BATCH_SIZE = 100
+    FINAL_EPSILON = 0.01
+    EVALUATE_EPSILON = 0.001
+    SAMPLE_BATCH_SIZE = 64
     STEPS_START_TRAIN = 1000
     UPDATE_TARGET_FREQUENCY = 1000
-    MAX_ACCUMULATED_REWARDS = 80.0
     CHECK_POINT_FREQUENCY = 20
     DQN_SCOPE = "deepq"
 
@@ -92,7 +98,7 @@ def main(arg):
         env = gym.make("Carla-v0")
         assert env.config['discrete_actions'], print('DQN must be used in the discrete action space')
         # env = NormalizedEnv(env)
-        env = MaxAndSkipEnv(env)
+        # env = MaxAndSkipEnv(env)
 
         actor_fn = dqn.dqn(env= env,
                         total_step_numbers=total_step_numbers,
@@ -111,18 +117,15 @@ def main(arg):
                         model_file_save_path=model_file_name)
         if is_play:
             logger.log("Running trained model")
-            # from gym.wrappers import Monitor
-            # env = Monitor(env, os.getcwd(), force=True)
-            obs = env.reset()
-
-            while True:
-                action = actor_fn(obs[None], update_eps=FINAL_EPSILON)[0]
-                obs, _, done, _ = env.step(action)
-                done = done.any() if isinstance(done, np.ndarray) else done
-
-                if done:
-                    obs = env.reset_env()
-
+            from experiment_suit.carla_benchmark import benchmark_summary
+            from functools import partial
+            action_fn = partial(actor_fn, update_eps=EVALUATE_EPSILON)
+            TEST_EPISODES = 10
+            metrics = benchmark_summary(env, action_fn=action_fn, num_test_episodes=TEST_EPISODES, logger=logger)
+            import json
+            metrics_json = json.dumps(metrics, indent=4)
+            with open('test_dqn_benchmark.json', 'w') as f:
+                f.write(metrics_json)
 
         return actor_fn
 

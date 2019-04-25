@@ -23,6 +23,7 @@
 
     2019-04-22:   1.0.0       修改measurements网络为(64,64)全连接层;
 
+    2019-04-25:   1.0.0       修改critic_loss为MSE_loss;
 
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
@@ -44,7 +45,11 @@ from utils.noise import AdaptiveParamNoiseSpec, OrnsteinUhlenbeckActionNoise
 
 
 def base_network(x, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_batch_normal=True):
-    batch_train = tf.constant(True, dtype=tf.bool)
+
+    if use_batch_normal:
+        batch_train = tf.constant(True, dtype=tf.bool)
+    else:
+        batch_train = tf.constant(False, dtype=tf.bool)
 
     if isinstance(x, tuple):
         x_image = tf.cast(x[0], dtype=tf.float32) / 255.0
@@ -77,10 +82,14 @@ def base_network(x, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_bat
 
 
 def actor_network(observations, num_actions, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_batch_normal=True):
-    batch_train = tf.constant(True, dtype=tf.bool)
+    if use_batch_normal:
+        batch_train = tf.constant(True, dtype=tf.bool)
+    else:
+        batch_train = tf.constant(False, dtype=tf.bool)
 
-    x = base_network(observations, activation=activation, output_activation=output_activation,
-                     use_batch_normal=use_batch_normal)
+    # x = base_network(observations, activation=activation, output_activation=output_activation,
+    #                  use_batch_normal=use_batch_normal)
+    x = observations
     x = layers.fully_connected(x, 128, activation_fn=None)
     x = batch_norm(x, train=batch_train, name="actor_fc0_bn")
     x = layers.fully_connected(x, num_actions, activation_fn=None)
@@ -90,10 +99,13 @@ def actor_network(observations, num_actions, activation=tf.nn.relu, output_activ
 
 
 def critic_network(observations, actions, activation=tf.nn.relu, output_activation=tf.nn.relu, use_batch_normal=True):
-
-    x = base_network(observations, activation=activation, output_activation=output_activation,
-                     use_batch_normal=use_batch_normal)
-
+    if use_batch_normal:
+        batch_train = tf.constant(True, dtype=tf.bool)
+    else:
+        batch_train = tf.constant(False, dtype=tf.bool)
+    # x = base_network(observations, activation=activation, output_activation=output_activation,
+    #                  use_batch_normal=use_batch_normal)
+    x = observations
     actions_dense = layers.fully_connected(actions, 128, activation_fn=activation)
     x = tf.concat([x, actions_dense], axis=-1)  # this assumes observation and action can be concatenated
     x = layers.fully_connected(x, 128, activation_fn=activation)
@@ -106,13 +118,14 @@ def actor_critic_network(observations, actions, activation=tf.nn.relu, output_ac
     num_actions = actions.shape.as_list()[-1]
 
     with tf.variable_scope('pi'):
-        pi = actor_network(observations, num_actions, activation=activation, output_activation=output_activation)
+        x = base_network(observations,activation=activation, output_activation=output_activation)
+        pi = actor_network(x, num_actions, activation=activation, output_activation=output_activation)
 
     with tf.variable_scope('q'):
-        q = critic_network(observations, actions, activation=activation, output_activation=output_activation)
+        q = critic_network(x, actions, activation=activation, output_activation=output_activation)
 
     with tf.variable_scope('q', reuse=True):
-        q_pi = critic_network(observations, pi, activation=activation, output_activation=output_activation)
+        q_pi = critic_network(x, pi, activation=activation, output_activation=output_activation)
 
     return pi, q, q_pi
 
@@ -149,7 +162,7 @@ def ddpg(env,
          prioritized_replay_beta0=0.4,
          prioritized_replay_beta_iters=None,
          prioritized_replay_eps=1e-6,
-         use_image_only_observations = False
+         use_image_only_observations = True
          ):
     tf.set_random_seed(seed)
     np.random.seed(seed)
@@ -236,8 +249,10 @@ def ddpg(env,
     # DDPG losses
     pi_loss = -tf.reduce_mean(q_pi)
     td_error = q - target_q
-    from utils.common import huber_loss
-    q_loss = tf.reduce_mean(importance_weight_ph * huber_loss(td_error))
+    # from utils.common import huber_loss
+    # q_loss = tf.reduce_mean(importance_weight_ph * huber_loss(td_error))
+    squared_error = (td_error)**2
+    q_loss = tf.reduce_mean(importance_weight_ph * squared_error)
 
     # Separate train ops for pi, q
     pi_optimizer = tf.train.AdamOptimizer(learning_rate=pi_lr)
@@ -283,7 +298,7 @@ def ddpg(env,
     observation = train_env.reset_env()
 
     # 获取actor网络动作
-    def get_action(observation, apply_noise=True):
+    def get_action(observation, apply_noise=False):
 
         if use_image_only_observations:
             actions = session.run(pi, feed_dict={obs0_ph: [observation]})
@@ -297,8 +312,9 @@ def ddpg(env,
             noise = action_noise()
             assert noise.shape == a.shape
             a += noise
-
-        return np.clip(a, a_min=action_range[0], a_max=action_range[1])
+            return np.clip(a, a_min=action_range[0], a_max=action_range[1])
+        else:
+            return actions
 
     # 在test_env中测试agent
     def test_agent(n=10):
@@ -307,7 +323,8 @@ def ddpg(env,
             o, r, d, ep_ret, ep_len = test_env.reset_env(), 0, False, 0, 0
             while not (d or (ep_len == max_each_epoch_len)):
                 # Take deterministic actions at test time (noise_scale=0)
-                o, r, d, _ = test_env.step(get_action(o, apply_noise=False))
+                action = get_action(o, apply_noise=False)[0]
+                o, r, d, _ = test_env.step(action)
                 ep_ret += r
                 ep_len += 1
 
