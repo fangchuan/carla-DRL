@@ -28,7 +28,7 @@ def email_sender(func):
                     'Starting date: {date}'.format(func_name=func.__doc__,
                                                    date=start_time.strftime(DATE_FORMAT))
         start_message = MIMEText(start_msg, 'plain', 'utf-8')
-        start_message['From'] = formataddr(["fc-msi", mail_sender])  # 括号里的对应发件人邮箱昵称、发件人邮箱账号
+        start_message['From'] = formataddr(["fc-128gSSD", mail_sender])  # 括号里的对应发件人邮箱昵称、发件人邮箱账号
         start_message['To'] = formataddr(["fc", mail_receiver])  # 括号里的对应收件人邮箱昵称、收件人邮箱账号
         start_message['Subject'] = "训练开始邮件"  # 邮件的主题，也可以说是标题
 
@@ -69,7 +69,7 @@ def email_sender(func):
                                              traceback=traceback.format_exc())
 
         finish_message = MIMEText(finish_msg, 'plain', 'utf-8')
-        finish_message['From'] = formataddr(["fc-msi", mail_sender])  # 括号里的对应发件人邮箱昵称、发件人邮箱账号
+        finish_message['From'] = formataddr(["fc-128gSSD", mail_sender])  # 括号里的对应发件人邮箱昵称、发件人邮箱账号
         finish_message['To'] = formataddr(["fc", mail_receiver])  # 括号里的对应收件人邮箱昵称、收件人邮箱账号
         finish_message['Subject'] = "训练结束邮件"  # 邮件的主题，也可以说是标题
 

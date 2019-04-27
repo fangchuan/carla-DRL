@@ -60,6 +60,8 @@
     2019-04-23:   1.0.0       修改reward function，不使用distance_reward;
                               start_position和end_position改为 one_turn_poses_task中的点对;
 
+    2019-04-26:   1.0.0       给cleanup()函数用装饰器,在进程最后退出时发送邮件;
+
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
 *********************************************************************************************************
@@ -193,12 +195,14 @@ REWARD_ASSIGN_PARAMETERS = {
 }
 
 live_carla_processes = set()  # To keep track of all the Carla processes we launch to make the cleanup easier
+from utils.email_sender import email_sender
+@email_sender
 def cleanup():
     """
     注册程序退出时的回调函数，在这个回调函数中做一些资源清理的操作
     如果程序是非正常crash，或者通过os._exit()退出，注册的回调函数将不会被调用
      """
-    DEBUG_PRINT("Killing live carla processes", live_carla_processes)
+    DEBUG_PRINT("Killing live carla processes", len(live_carla_processes))
     for pgid in live_carla_processes:
         os.killpg(pgid, signal.SIGKILL)
 atexit.register(cleanup)
