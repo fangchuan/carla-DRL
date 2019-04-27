@@ -60,3 +60,7 @@
             measurement data = [one_hot(next_command), forward_speed, distance_to_goal, collsioin],训练80W步还是不收敛，没学会拐弯;
 
 2019-04-22:  measurement data = [next_command, distance_to_goal,forward_speed, location_x,location_y]
+2019-04-23:  OBSERVATION中带measurement data试图做决策任务来指导寻迹(Lane following)必须采用单独的网络来完成决策;
+2019-04-25:  将DDPG的网络结构中的卷积部分提出来，与actor_net、critic_net分离，效果不好，直接导致训练发散;
+2019-04-26:  DDPG训练框架改为每一步都训练.
+
