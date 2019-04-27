@@ -22,8 +22,12 @@
     2019-04-19:   1.0.0       observation=(images,measurements), measurements网络为一层128的全连接层, 然后与image的卷积输出concatenate;
 
     2019-04-22:   1.0.0       修改measurements网络为(64,64)全连接层;
-
     2019-04-25:   1.0.0       修改critic_loss为MSE_loss;
+                               MSE_loss容易使critic_loss不收敛;
+    2019-04-26:   1.0.0       修改更新框架:在start_steps后,每一步都进行DDPG网络更新;
+                              base_network放在critic_network和actor_network之前的方法容易造成loss发散;
+                              prioritized_replay_beta0 = 0.6;
+                              修改actor_network、critic_network的全连接层为512;
 
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
@@ -53,7 +57,6 @@ def base_network(x, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_bat
 
     if isinstance(x, tuple):
         x_image = tf.cast(x[0], dtype=tf.float32) / 255.0
-        # x_measure = batch_norm(x[1], train=batch_train, name="measurements_input_bn")
         x_measure = tf.cast(x[1], dtype=tf.float32) / 1.0
     else:
         x_image = tf.cast(x, dtype=tf.float32) / 255.0
@@ -87,10 +90,9 @@ def actor_network(observations, num_actions, activation=tf.nn.relu, output_activ
     else:
         batch_train = tf.constant(False, dtype=tf.bool)
 
-    # x = base_network(observations, activation=activation, output_activation=output_activation,
-    #                  use_batch_normal=use_batch_normal)
-    x = observations
-    x = layers.fully_connected(x, 128, activation_fn=None)
+    x = base_network(observations, activation=activation, output_activation=output_activation,
+                     use_batch_normal=use_batch_normal)
+    x = layers.fully_connected(x, 512, activation_fn=None)
     x = batch_norm(x, train=batch_train, name="actor_fc0_bn")
     x = layers.fully_connected(x, num_actions, activation_fn=None)
     x = batch_norm(x, train=batch_train, name="actor_output_bn")
@@ -103,12 +105,11 @@ def critic_network(observations, actions, activation=tf.nn.relu, output_activati
         batch_train = tf.constant(True, dtype=tf.bool)
     else:
         batch_train = tf.constant(False, dtype=tf.bool)
-    # x = base_network(observations, activation=activation, output_activation=output_activation,
-    #                  use_batch_normal=use_batch_normal)
-    x = observations
+    x = base_network(observations, activation=activation, output_activation=output_activation,
+                     use_batch_normal=use_batch_normal)
     actions_dense = layers.fully_connected(actions, 128, activation_fn=activation)
     x = tf.concat([x, actions_dense], axis=-1)  # this assumes observation and action can be concatenated
-    x = layers.fully_connected(x, 128, activation_fn=activation)
+    x = layers.fully_connected(x, 512, activation_fn=activation)
     x = layers.fully_connected(x, 1, activation_fn=None)
     # x = output_activation(x)
     return x
@@ -118,23 +119,15 @@ def actor_critic_network(observations, actions, activation=tf.nn.relu, output_ac
     num_actions = actions.shape.as_list()[-1]
 
     with tf.variable_scope('pi'):
-        x = base_network(observations,activation=activation, output_activation=output_activation)
-        pi = actor_network(x, num_actions, activation=activation, output_activation=output_activation)
+        pi = actor_network(observations, num_actions, activation=activation, output_activation=output_activation)
 
     with tf.variable_scope('q'):
-        q = critic_network(x, actions, activation=activation, output_activation=output_activation)
+        q = critic_network(observations, actions, activation=activation, output_activation=output_activation)
 
     with tf.variable_scope('q', reuse=True):
-        q_pi = critic_network(x, pi, activation=activation, output_activation=output_activation)
+        q_pi = critic_network(observations, pi, activation=activation, output_activation=output_activation)
 
     return pi, q, q_pi
-
-
-"""
-
-Deep Deterministic Policy Gradient (DDPG)
-
-"""
 
 
 def ddpg(env,
@@ -159,7 +152,7 @@ def ddpg(env,
          model_file_save_path=None,
          use_prioritized_replay=True,
          prioritized_replay_alpha=0.6,
-         prioritized_replay_beta0=0.4,
+         prioritized_replay_beta0=0.6,
          prioritized_replay_beta_iters=None,
          prioritized_replay_eps=1e-6,
          use_image_only_observations = True
@@ -249,10 +242,8 @@ def ddpg(env,
     # DDPG losses
     pi_loss = -tf.reduce_mean(q_pi)
     td_error = q - target_q
-    # from utils.common import huber_loss
-    # q_loss = tf.reduce_mean(importance_weight_ph * huber_loss(td_error))
-    squared_error = (td_error)**2
-    q_loss = tf.reduce_mean(importance_weight_ph * squared_error)
+    from utils.common import huber_loss
+    q_loss = tf.reduce_mean(importance_weight_ph * huber_loss(td_error))
 
     # Separate train ops for pi, q
     pi_optimizer = tf.train.AdamOptimizer(learning_rate=pi_lr)
@@ -317,11 +308,11 @@ def ddpg(env,
             return actions
 
     # 在test_env中测试agent
-    def test_agent(n=10):
+    def test_agent(n=1):
         o = test_env.reset()
         for j in range(n):
             o, r, d, ep_ret, ep_len = test_env.reset_env(), 0, False, 0, 0
-            while not (d or (ep_len == max_each_epoch_len)):
+            while not (d ):#or (ep_len == max_each_epoch_len)):
                 # Take deterministic actions at test time (noise_scale=0)
                 action = get_action(o, apply_noise=False)[0]
                 o, r, d, _ = test_env.step(action)
@@ -335,17 +326,12 @@ def ddpg(env,
 
     # Main loop: collect experience in env and update/log each epoch
     for step in range(total_steps):
-
-        """
-        Until start_steps have elapsed, randomly sample actions
-        from a uniform distribution for better exploration. Afterwards, 
-        use the learned policy (with some noise, via act_noise). 
-        """
+        # 在start_steps后才开始采用策略网络的输出
         if step > start_steps:
             action = get_action(observation, apply_noise=True)
         else:
             action = train_env.action_space.sample()
-            # action = np.random.random(size=number_actions)
+
         # 记录每次的action
         print("action = ", action)
 
@@ -357,7 +343,7 @@ def ddpg(env,
         # Ignore the "done" signal if it comes from hitting the time
         # horizon (that is, when it's an artificial terminal signal
         # that isn't based on the agent's state)
-        done = False if each_epoch_length == max_each_epoch_len else done
+        # done = False if each_epoch_length == max_each_epoch_len else done
 
         # Store experience to replay buffer
         replay_buffer.add(observation, action, reward, observation1, done)
@@ -366,73 +352,73 @@ def ddpg(env,
         # most recent observation!
         observation = observation1
 
-        # 在每次运动轨迹结束或者到达 steps == max_each_epoch_len时进行DDPG网络更新
-        if done or (each_epoch_length == max_each_epoch_len):
-            for training_iteration in range(each_epoch_length):
-                if not use_prioritized_replay:
-                    batch_obs0, batch_actions, batch_rewards, batch_obs1, batch_done = replay_buffer.sample(batch_size)
-                    if use_image_only_observations:
-                        feed_dict = {obs0_ph: batch_obs0,
-                                     obs1_ph: batch_obs1,
-                                     actions_ph: batch_actions,
-                                     rewards_ph: batch_rewards,
-                                     done_ph: batch_done.astype('float32'),
-                                     importance_weight_ph: np.ones_like(batch_rewards)
-                                     }
-                    else:
-                        feed_obs0 = np.array(list(batch_obs0[:, 0]), copy=False)
-                        feed_measurements0 = np.array(list(batch_obs0[:, 1]), copy=False)
-                        feed_obs1 = np.array(list(batch_obs1[:, 0]), copy=False)
-                        feed_measurements1 = np.array(list(batch_obs1[:, 1]), copy=False)
-                        feed_dict = {obs0_ph: feed_obs0,
-                                     obs1_ph: feed_obs1,
-                                     measurements0_ph:feed_measurements0,
-                                     measurements1_ph:feed_measurements1,
-                                     actions_ph: batch_actions,
-                                     rewards_ph: batch_rewards,
-                                     done_ph: batch_done.astype('float32'),
-                                     importance_weight_ph: np.ones_like(batch_rewards)
-                                     }
+        # 在heatup后,每一步都进行DDPG网络更新
+        if step > start_steps:
+            if not use_prioritized_replay:
+                batch_obs0, batch_actions, batch_rewards, batch_obs1, batch_done = replay_buffer.sample(batch_size)
+                if use_image_only_observations:
+                    feed_dict = {obs0_ph: batch_obs0,
+                                 obs1_ph: batch_obs1,
+                                 actions_ph: batch_actions,
+                                 rewards_ph: batch_rewards,
+                                 done_ph: batch_done.astype('float32'),
+                                 importance_weight_ph: np.ones_like(batch_rewards)
+                                 }
                 else:
-                    experience = replay_buffer.sample(batch_size, beta=beta_schedule.value(step))
-                    (batch_obs0, batch_actions, batch_rewards, batch_obs1, batch_done, batch_weights,batch_idxes) = experience
-                    if use_image_only_observations:
-                        feed_dict = {obs0_ph: batch_obs0,
-                                     obs1_ph: batch_obs1,
-                                     actions_ph: batch_actions,
-                                     rewards_ph: batch_rewards,
-                                     done_ph: batch_done.astype('float32'),
-                                     importance_weight_ph: batch_weights
-                                     }
-                    else:
-                        feed_obs0 = np.array(list(batch_obs0[:, 0]), copy=False)
-                        feed_measurements0 = np.array(list(batch_obs0[:, 1]), copy=False)
-                        feed_obs1 = np.array(list(batch_obs1[:, 0]), copy=False)
-                        feed_measurements1 = np.array(list(batch_obs1[:, 1]), copy=False)
-                        feed_dict = {obs0_ph: feed_obs0,
-                                     obs1_ph: feed_obs1,
-                                     measurements0_ph: feed_measurements0,
-                                     measurements1_ph: feed_measurements1,
-                                     actions_ph: batch_actions,
-                                     rewards_ph: batch_rewards,
-                                     done_ph: batch_done.astype('float32'),
-                                     importance_weight_ph: batch_weights
-                                     }
+                    feed_obs0 = np.array(list(batch_obs0[:, 0]), copy=False)
+                    feed_measurements0 = np.array(list(batch_obs0[:, 1]), copy=False)
+                    feed_obs1 = np.array(list(batch_obs1[:, 0]), copy=False)
+                    feed_measurements1 = np.array(list(batch_obs1[:, 1]), copy=False)
+                    feed_dict = {obs0_ph: feed_obs0,
+                                 obs1_ph: feed_obs1,
+                                 measurements0_ph:feed_measurements0,
+                                 measurements1_ph:feed_measurements1,
+                                 actions_ph: batch_actions,
+                                 rewards_ph: batch_rewards,
+                                 done_ph: batch_done.astype('float32'),
+                                 importance_weight_ph: np.ones_like(batch_rewards)
+                                 }
+            else:
+                experience = replay_buffer.sample(batch_size, beta=beta_schedule.value(step))
+                (batch_obs0, batch_actions, batch_rewards, batch_obs1, batch_done, batch_weights,batch_idxes) = experience
+                if use_image_only_observations:
+                    feed_dict = {obs0_ph: batch_obs0,
+                                 obs1_ph: batch_obs1,
+                                 actions_ph: batch_actions,
+                                 rewards_ph: batch_rewards,
+                                 done_ph: batch_done.astype('float32'),
+                                 importance_weight_ph: batch_weights
+                                 }
+                else:
+                    feed_obs0 = np.array(list(batch_obs0[:, 0]), copy=False)
+                    feed_measurements0 = np.array(list(batch_obs0[:, 1]), copy=False)
+                    feed_obs1 = np.array(list(batch_obs1[:, 0]), copy=False)
+                    feed_measurements1 = np.array(list(batch_obs1[:, 1]), copy=False)
+                    feed_dict = {obs0_ph: feed_obs0,
+                                 obs1_ph: feed_obs1,
+                                 measurements0_ph: feed_measurements0,
+                                 measurements1_ph: feed_measurements1,
+                                 actions_ph: batch_actions,
+                                 rewards_ph: batch_rewards,
+                                 done_ph: batch_done.astype('float32'),
+                                 importance_weight_ph: batch_weights
+                                 }
 
-                # Q-learning update
-                Q_loss, Q_value, td_errors, _ = session.run([q_loss, q, td_error, train_q_op], feed_dict)
-                if use_prioritized_replay:
-                    new_priorities = np.abs(td_errors) + prioritized_replay_eps
-                    replay_buffer.update_priorities(batch_idxes, new_priorities)
-                epoch_critic_losses.append(Q_loss)
-                epoch_qs.append(Q_value)
+            # Q-learning update
+            Q_loss, Q_value, td_errors, _ = session.run([q_loss, q, td_error, train_q_op], feed_dict)
+            if use_prioritized_replay:
+                new_priorities = np.abs(td_errors) + prioritized_replay_eps
+                replay_buffer.update_priorities(batch_idxes, new_priorities)
+            epoch_critic_losses.append(Q_loss)
+            epoch_qs.append(Q_value)
 
-                # Policy update
-                if training_iteration % 2 == 0:
-                    PI_loss, _, _ = session.run([pi_loss, train_pi_op, target_update], feed_dict)
-                    epoch_actor_losses.append(PI_loss)
+            # Policy update
+            if step % 2 == 0:
+                PI_loss, _, _ = session.run([pi_loss, train_pi_op, target_update], feed_dict)
+                epoch_actor_losses.append(PI_loss)
 
-            # 记录每个epoch的累计回报和总步数
+        if done:
+            # 记录每个episode的累计回报和总步数
             epoch_rewards.append(each_epoch_rewards)
             epoch_steps.append(each_epoch_length)
             each_epoch_rewards = 0
