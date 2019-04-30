@@ -138,7 +138,7 @@ scenario_config['weather_distribution'] = weathers
 
 # Default environment configuration
 ENVIRONMENT_CONFIG = {
-    "discrete_actions": False,
+    "discrete_actions":True,
     "use_gray_or_depth_image":True,
     "use_image_only_observations": True,  # Exclude high-level planner inputs & goal info from the observations
     "server_map": "/Game/Maps/" + scenario_config["city"][0], # Town01
@@ -588,7 +588,7 @@ class CarlaEnv(gym.Env):
             py_measurements["is_complete"] = False
 
         done = ( py_measurements["game_timestamp"] > self.scenario["episode_max_time"] or
-            # py_measurements["next_command"] == "REACH_GOAL" or
+            py_measurements["next_command"] == "REACH_GOAL" or
             # py_measurements["intersection_offroad"] > MAX_OFFROAD_DEGREE or
             # is_rush_wrong_way  or
             (self.config["early_terminate_on_collision"] and check_collision(py_measurements)))

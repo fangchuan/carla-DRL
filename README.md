@@ -63,4 +63,8 @@
 2019-04-23:  OBSERVATION中带measurement data试图做决策任务来指导寻迹(Lane following)必须采用单独的网络来完成决策;
 2019-04-25:  将DDPG的网络结构中的卷积部分提出来，与actor_net、critic_net分离，效果不好，直接导致训练发散;
 2019-04-26:  DDPG训练框架改为每一步都训练.
-
+2019-04-28:  DDPG算法中critic network的output_activation使用出错，跑actor network时应当fix BN, 负责会使输出的动作一直都是同一个动作，导致q_value一直不收敛;
+             DQN算法取消BN;
+2019-04-29:  DDPG算法取消BN;
+2019-04-30:  DQN算法3M步后在训练场景中都能完成驾驶任务，但是在测试场景(start_position,end_position不同)中基本完不成.
+             测试DQN时不同weather得到的结果差异很大，说明模型泛化能力很差;
