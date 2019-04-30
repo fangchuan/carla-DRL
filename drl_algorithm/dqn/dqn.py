@@ -24,6 +24,10 @@
     2019-3-30:                输入层加一层 BN;
                               最后fc层神经元个数改为64;
 
+	2019-04-27:    1.0.0   q_function网络不使用BN, 因为在get_action时应当fix BN,当前batch_normal函数不方便传参;
+        2019-04-28:    1.0.0   增加q_value来查看每个动作的q值,方便调试;
+				不使用最后一层dropout层,调试算法到底为什么不收敛;
+    
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
 *********************************************************************************************************
@@ -59,22 +63,22 @@ def q_function(inpt, num_actions, scope, reuse=False):
     with tf.variable_scope(scope, reuse=reuse):
         out = tf.cast(inpt, tf.float32) / 255.
         out = layers.conv2d(out, 32, kernel_size=[8,8], stride=4, padding='SAME', activation_fn=None)
-        out = batch_norm(out, train=batch_train, name="conv0_bn")
+   #     out = batch_norm(out, train=batch_train, name="conv0_bn")
         out = tf.nn.relu(out)
         # out = layers.max_pool2d(out, kernel_size=[3,3], stride=2, padding='VALID')
         out = layers.conv2d(out, 64, kernel_size=[4,4], stride=2, padding='SAME', activation_fn=None)
-        out = batch_norm(out, train=batch_train, name="conv1_bn")
+  #      out = batch_norm(out, train=batch_train, name="conv1_bn")
         out = tf.nn.relu(out)
         # out = layers.max_pool2d(out, kernel_size=[3, 3], stride=2, padding='VALID')
         out = layers.conv2d(out, 64, kernel_size=[3, 3], stride=1, padding='SAME', activation_fn=None)
-        out = batch_norm(out, train=batch_train, name="con2_bn")
+ #       out = batch_norm(out, train=batch_train, name="con2_bn")
         out = tf.nn.relu(out)
         reshape = tf.reshape(out, shape=[-1, out.get_shape()[1] * out.get_shape()[2] * 64])
 
         out = layers.fully_connected(reshape, num_outputs=512, activation_fn=None)
-        out = batch_norm(out, train=batch_train, name="fc0_bn")
+#        out = batch_norm(out, train=batch_train, name="fc0_bn")
         out = tf.nn.relu(out)
-        out = tf.nn.dropout(out, keep_prob=0.25)
+#        out = tf.nn.dropout(out, keep_prob=0.25)
         out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
         return out
 
@@ -104,8 +108,11 @@ def dqn(env,
     episodes = 0           #记录episode number
     mean_100ep_reward = 0  # 最后100episode的平均reward
     saved_mean_reward = None  # 保存的平均reward
-    episode_reward = 0.0      #记录每个episode 的累计回报
-    episode_rewards = deque(maxlen=100)
+    each_episode_reward = 0.0      #记录每个episode 的累计回报
+    episode_rewards = deque(maxlen=100)  #记录最近100个episode的累计回报
+    each_episode_Qvalues = []
+    episodes_Qvalues = deque(maxlen=100)
+    episodes_td_errors = deque(maxlen=100)
 
 
     # Create all the functions necessary to train the model
@@ -119,6 +126,7 @@ def dqn(env,
         optimizer=tf.train.AdamOptimizer(learning_rate=lr),
         scope=scope
     )
+    q_value = debug["q_values"]
 
     # Create the replay buffer
     if not use_prioritized_replay:
@@ -158,16 +166,25 @@ def dqn(env,
     for step in range(total_step_numbers):
         # Take action and update exploration to the newest value
         action = actor(obs[None], update_eps=exploration.value(step))[0]
+        print("action = ", action)
+
+        Q_values = q_value(obs[None])
+        Q_values = Q_values[0]
+#        print("Q_values: ", Q_values)
+        each_episode_Qvalues.append(Q_values)
+
         new_obs, rew, done, _ = env.step(action)
         # Store transition in the replay buffer.
         replay_buffer.add(obs, action, rew, new_obs, float(done))
         obs = new_obs
 
-        episode_reward += rew
+        each_episode_reward += rew
         if done:
             obs = env.reset_env()
-            episode_rewards.append(episode_reward)
-            episode_reward = 0.0
+            episode_rewards.append(each_episode_reward)
+            episodes_Qvalues.append(np.mean(each_episode_Qvalues, axis=0))
+            each_episode_reward = 0.0
+            each_episode_Qvalues = []
             episodes += 1
 
 
@@ -184,6 +201,8 @@ def dqn(env,
                 new_priorities = np.abs(td_errors) + prioritized_replay_eps
                 replay_buffer.update_priorities(batch_idxes, new_priorities)
 
+            episodes_td_errors.append(np.mean(td_errors))
+
             # Update target network periodically.
             if step % update_target_freq == 0:
                 update_target()
@@ -191,10 +210,31 @@ def dqn(env,
         if done and episodes % checkpoints_freq == 0:
 
             mean_100ep_reward = round(np.mean(episode_rewards), ndigits=2)
+            mean_100ep_Qvalues = np.mean(episodes_Qvalues, axis=0)
+            mean_100ep_td_error = np.mean(episodes_td_errors)
+            action0_Qvalue = mean_100ep_Qvalues[0]
+            action1_Qvalue = mean_100ep_Qvalues[1]
+            action2_Qvalue = mean_100ep_Qvalues[2]
+            action3_Qvalue = mean_100ep_Qvalues[3]
+            action4_Qvalue = mean_100ep_Qvalues[4]
+            action5_Qvalue = mean_100ep_Qvalues[5]
+            action6_Qvalue = mean_100ep_Qvalues[6]
+            action7_Qvalue = mean_100ep_Qvalues[7]
+            action8_Qvalue = mean_100ep_Qvalues[8]
 
             logger.record_tabular("steps", step)
             logger.record_tabular("episodes", episodes)
             logger.record_tabular("mean_100ep_reward", mean_100ep_reward)
+            logger.record_tabular("mean_100ep_td_error", mean_100ep_td_error)
+            logger.record_tabular("action0_Qvalue", action0_Qvalue)
+            logger.record_tabular("action1_Qvalue", action1_Qvalue)
+            logger.record_tabular("action2_Qvalue", action2_Qvalue)
+            logger.record_tabular("action3_Qvalue", action3_Qvalue)
+            logger.record_tabular("action4_Qvalue", action4_Qvalue)
+            logger.record_tabular("action5_Qvalue", action5_Qvalue)
+            logger.record_tabular("action6_Qvalue", action6_Qvalue)
+            logger.record_tabular("action7_Qvalue", action7_Qvalue)
+            logger.record_tabular("action8_Qvalue", action8_Qvalue)
             logger.record_tabular("time_exploring", int(100 * exploration.value(step)))
             logger.dump_tabular()
 

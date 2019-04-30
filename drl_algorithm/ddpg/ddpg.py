@@ -29,6 +29,13 @@
                               prioritized_replay_beta0 = 0.6;
                               修改actor_network、critic_network的全连接层为512;
 
+    2019-04-27:   1.0.0      改用tf.layers.batch_normal;
+                             get_action()中要fix batch_normal;
+
+    2019-04-28:   1.0.0      critic network的输出不应该加activation function;
+    2019-04-29:   1.0.0      不使用BN;
+                             actor network更新频率与critic network一样;
+
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
 *********************************************************************************************************
@@ -38,6 +45,7 @@ import time
 import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
+from utils.common import huber_loss
 from baselines.common.schedules import LinearSchedule
 from collections import deque
 from utils.common import get_vars, count_vars
@@ -47,14 +55,8 @@ from utils.common import save_variables, load_variables, batch_norm
 from utils.noise import AdaptiveParamNoiseSpec, OrnsteinUhlenbeckActionNoise
 
 
-
-def base_network(x, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_batch_normal=True):
-
-    if use_batch_normal:
-        batch_train = tf.constant(True, dtype=tf.bool)
-    else:
-        batch_train = tf.constant(False, dtype=tf.bool)
-
+# the network builder function
+def base_network(x, activation=tf.nn.relu,  is_training=False):
     if isinstance(x, tuple):
         x_image = tf.cast(x[0], dtype=tf.float32) / 255.0
         x_measure = tf.cast(x[1], dtype=tf.float32) / 1.0
@@ -63,14 +65,11 @@ def base_network(x, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_bat
         x_measure = None
     # send images t CNN
     out_image = layers.conv2d(x_image, 32, kernel_size=[8, 8], stride=4, padding='SAME', activation_fn=activation)
-    if use_batch_normal:
-        out_image = batch_norm(out_image, train=batch_train, name="conv0_bn")
+    # out_image = tf.layers.batch_normalization(out_image, training=is_training)
     out_image = layers.conv2d(out_image, 64, kernel_size=[4, 4], stride=2, padding='SAME', activation_fn=activation)
-    if use_batch_normal:
-        out_image = batch_norm(out_image, train=batch_train, name="conv1_bn")
+    # out_image = tf.layers.batch_normalization(out_image, training=is_training)
     out_image = layers.conv2d(out_image, 64, kernel_size=[3, 3], stride=1, padding='SAME', activation_fn=activation)
-    if use_batch_normal:
-        out_image = batch_norm(out_image, train=batch_train, name="conv2_bn")
+    # out_image = tf.layers.batch_normalization(out_image, training=is_training)
     image_reshape = tf.reshape(out_image, shape=[-1, out_image.get_shape()[1] * out_image.get_shape()[2] * 64])
     # send measurements data to dense layer
     if x_measure is not None:
@@ -83,49 +82,37 @@ def base_network(x, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_bat
     return out
 
 
-
-def actor_network(observations, num_actions, activation=tf.nn.relu, output_activation=tf.nn.tanh, use_batch_normal=True):
-    if use_batch_normal:
-        batch_train = tf.constant(True, dtype=tf.bool)
-    else:
-        batch_train = tf.constant(False, dtype=tf.bool)
-
-    x = base_network(observations, activation=activation, output_activation=output_activation,
-                     use_batch_normal=use_batch_normal)
+def actor_network(observations, num_actions, activation=tf.nn.relu, output_activation=tf.nn.tanh, is_training=False):
+    x = base_network(observations, activation=activation,  is_training=is_training)
     x = layers.fully_connected(x, 512, activation_fn=None)
-    x = batch_norm(x, train=batch_train, name="actor_fc0_bn")
+    # x = tf.layers.batch_normalization(x, training=is_training)
+    x = activation(x)
     x = layers.fully_connected(x, num_actions, activation_fn=None)
-    x = batch_norm(x, train=batch_train, name="actor_output_bn")
+    # x = tf.layers.batch_normalization(x, training=is_training)
     x = output_activation(x)
     return x
 
 
-def critic_network(observations, actions, activation=tf.nn.relu, output_activation=tf.nn.relu, use_batch_normal=True):
-    if use_batch_normal:
-        batch_train = tf.constant(True, dtype=tf.bool)
-    else:
-        batch_train = tf.constant(False, dtype=tf.bool)
-    x = base_network(observations, activation=activation, output_activation=output_activation,
-                     use_batch_normal=use_batch_normal)
+def critic_network(observations, actions, activation=tf.nn.relu, is_training=False):
+    x = base_network(observations, activation=activation,  is_training=is_training)
     actions_dense = layers.fully_connected(actions, 128, activation_fn=activation)
     x = tf.concat([x, actions_dense], axis=-1)  # this assumes observation and action can be concatenated
     x = layers.fully_connected(x, 512, activation_fn=activation)
     x = layers.fully_connected(x, 1, activation_fn=None)
-    # x = output_activation(x)
+
     return x
 
-
-def actor_critic_network(observations, actions, activation=tf.nn.relu, output_activation=tf.nn.tanh):
+def actor_critic_network(observations, actions, activation=tf.nn.relu, output_activation=tf.nn.tanh, is_training=False):
     num_actions = actions.shape.as_list()[-1]
 
     with tf.variable_scope('pi'):
-        pi = actor_network(observations, num_actions, activation=activation, output_activation=output_activation)
+        pi = actor_network(observations, num_actions, activation=activation, output_activation=output_activation,is_training=is_training)
 
     with tf.variable_scope('q'):
-        q = critic_network(observations, actions, activation=activation, output_activation=output_activation)
+        q = critic_network(observations, actions, activation=activation, is_training=is_training)
 
     with tf.variable_scope('q', reuse=True):
-        q_pi = critic_network(observations, pi, activation=activation, output_activation=output_activation)
+        q_pi = critic_network(observations, pi, activation=activation, is_training=is_training)
 
     return pi, q, q_pi
 
@@ -190,6 +177,7 @@ def ddpg(env,
     rewards_ph = tf.placeholder(tf.float32, shape=(None, 1), name='rewards')
     actions_ph = tf.placeholder(tf.float32, shape=(None,) + action_shape, name='actions')
     importance_weight_ph = tf.placeholder(tf.float32, shape=(None, 1), name="importanceWeight")
+    is_training_ph = tf.placeholder(tf.bool, name='training')
 
     action_noise = None
     param_noise = None
@@ -202,21 +190,23 @@ def ddpg(env,
     else:
         logger.info("No specified noise......")
 
+
+
     # Main outputs from computation graph
     with tf.variable_scope('main'):
         if use_image_only_observations:
-            pi, q, q_pi = actor_critic_network(obs0_ph, actions_ph)
+            pi, q, q_pi = actor_critic_network(obs0_ph, actions_ph, is_training=is_training_ph)
         else:
-            pi, q, q_pi = actor_critic_network((obs0_ph,measurements0_ph), actions_ph)
+            pi, q, q_pi = actor_critic_network((obs0_ph,measurements0_ph), actions_ph, is_training=is_training_ph)
 
     # Target networks
     with tf.variable_scope('target'):
         # Note that the action placeholder going to actor_critic here is
         # irrelevant, because we only need q_targ(s, pi_targ(s)).
         if use_image_only_observations:
-            pi_targ, _, q_pi_targ = actor_critic_network(obs1_ph, actions_ph)
+            pi_targ, _, q_pi_targ = actor_critic_network(obs1_ph, actions_ph,is_training=is_training_ph)
         else:
-            pi_targ, _, q_pi_targ = actor_critic_network((obs1_ph, measurements1_ph), actions_ph)
+            pi_targ, _, q_pi_targ = actor_critic_network((obs1_ph, measurements1_ph), actions_ph,is_training=is_training_ph)
 
     # Experience buffer
     if use_prioritized_replay:
@@ -242,15 +232,12 @@ def ddpg(env,
     # DDPG losses
     pi_loss = -tf.reduce_mean(q_pi)
     td_error = q - target_q
-    from utils.common import huber_loss
     q_loss = tf.reduce_mean(importance_weight_ph * huber_loss(td_error))
 
     # Separate train ops for pi, q
-    pi_optimizer = tf.train.AdamOptimizer(learning_rate=pi_lr)
-    q_optimizer = tf.train.AdamOptimizer(learning_rate=q_lr)
-
-    train_pi_op = pi_optimizer.minimize(pi_loss, var_list=get_vars('main/pi'))
-    train_q_op = q_optimizer.minimize(q_loss, var_list=get_vars('main/q'))
+    # with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+    train_pi_op = tf.train.AdamOptimizer(learning_rate=pi_lr).minimize(pi_loss, var_list=get_vars('main/pi'))
+    train_q_op = tf.train.AdamOptimizer(learning_rate=q_lr).minimize(q_loss, var_list=get_vars('main/q'))
 
     # Polyak averaging for target variables
     target_update = tf.group([tf.assign(v_targ, polyak * v_targ + (1 - polyak) * v_main)
@@ -292,10 +279,12 @@ def ddpg(env,
     def get_action(observation, apply_noise=False):
 
         if use_image_only_observations:
-            actions = session.run(pi, feed_dict={obs0_ph: [observation]})
+            actions = session.run(pi, feed_dict={obs0_ph: [observation],
+                                                 is_training_ph: False})
         else:
             actions = session.run(pi, feed_dict={obs0_ph:[observation[0]],
-                                                 measurements0_ph:[observation[1]]})
+                                                 measurements0_ph:[observation[1]],
+                                                 is_training_ph:False})
         print("pi generated from actor: ", actions)
         a = actions[0]
         epoch_actions.append(a)
@@ -362,7 +351,8 @@ def ddpg(env,
                                  actions_ph: batch_actions,
                                  rewards_ph: batch_rewards,
                                  done_ph: batch_done.astype('float32'),
-                                 importance_weight_ph: np.ones_like(batch_rewards)
+                                 importance_weight_ph: np.ones_like(batch_rewards),
+                                 is_training_ph:False
                                  }
                 else:
                     feed_obs0 = np.array(list(batch_obs0[:, 0]), copy=False)
@@ -376,7 +366,8 @@ def ddpg(env,
                                  actions_ph: batch_actions,
                                  rewards_ph: batch_rewards,
                                  done_ph: batch_done.astype('float32'),
-                                 importance_weight_ph: np.ones_like(batch_rewards)
+                                 importance_weight_ph: np.ones_like(batch_rewards),
+                                 is_training_ph:False
                                  }
             else:
                 experience = replay_buffer.sample(batch_size, beta=beta_schedule.value(step))
@@ -387,7 +378,8 @@ def ddpg(env,
                                  actions_ph: batch_actions,
                                  rewards_ph: batch_rewards,
                                  done_ph: batch_done.astype('float32'),
-                                 importance_weight_ph: batch_weights
+                                 importance_weight_ph: batch_weights,
+                                 is_training_ph:False
                                  }
                 else:
                     feed_obs0 = np.array(list(batch_obs0[:, 0]), copy=False)
@@ -401,7 +393,8 @@ def ddpg(env,
                                  actions_ph: batch_actions,
                                  rewards_ph: batch_rewards,
                                  done_ph: batch_done.astype('float32'),
-                                 importance_weight_ph: batch_weights
+                                 importance_weight_ph: batch_weights,
+                                 is_training_ph:False
                                  }
 
             # Q-learning update
@@ -409,13 +402,13 @@ def ddpg(env,
             if use_prioritized_replay:
                 new_priorities = np.abs(td_errors) + prioritized_replay_eps
                 replay_buffer.update_priorities(batch_idxes, new_priorities)
-            epoch_critic_losses.append(Q_loss)
-            epoch_qs.append(Q_value)
+            epoch_critic_losses.append(np.mean(Q_loss))
+            epoch_qs.append(np.mean(Q_value))
 
             # Policy update
-            if step % 2 == 0:
-                PI_loss, _, _ = session.run([pi_loss, train_pi_op, target_update], feed_dict)
-                epoch_actor_losses.append(PI_loss)
+            # if step % 2 == 0:
+            PI_loss, _, _ = session.run([pi_loss, train_pi_op, target_update], feed_dict)
+            epoch_actor_losses.append(np.mean(PI_loss))
 
         if done:
             # 记录每个episode的累计回报和总步数
