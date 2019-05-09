@@ -24,10 +24,10 @@
     "city": "Town01",
     "start_pos_id": 36,
     "end_pos_id": 77,
-    "num_vehicles": 0,
-    "num_pedestrians": 0,
+    "num_vehicles": 25,
+    "num_pedestrians": 30,
     "weather_distribution": [1],
-    "episode_max_time": 100000
+    "episode_max_time": 200000
   },
 
   "Lane_Keep_Town2": {
@@ -48,7 +48,7 @@
     [20, 107], [78, 70], [95, 102], [68, 44], [45, 69]
   ],
   "One_Turn_Poses_Town01":[
-    [36, 77], [30, 77], [56,115], [77, 30]
+    [36, 77], [77, 117], [117,36]
   ],
 
   "Curve_Poses_Town01": [

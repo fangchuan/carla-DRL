@@ -138,12 +138,12 @@ scenario_config['weather_distribution'] = weathers
 
 # Default environment configuration
 ENVIRONMENT_CONFIG = {
-    "discrete_actions":True,
+    "discrete_actions":False,
     "use_gray_or_depth_image":True,
     "use_image_only_observations": True,  # Exclude high-level planner inputs & goal info from the observations
     "server_map": "/Game/Maps/" + scenario_config["city"][0], # Town01
     "scenarios": scenario_config["Lane_Keep_Town1"], #[scenario_config["Lane_Keep_Town1"],scenario_config["Lane_Keep_Town2"]],
-    # "use_random_position_points": False,
+    "use_random_position_points": False,
     "framestack": 4,  # note: only [1, 2, 3,4] currently supported
     "enable_planner": True,
     "use_depth_camera": False,
@@ -431,13 +431,13 @@ class CarlaEnv(gym.Env):
         scene = self.client.load_settings(settings)
         positions = scene.player_start_spots
         # 读取配置文件中的start_pos, end_pos
-        # if self.config["use_random_position_points"]:
-        #     straight_poses_tasks_len = len(scenario_config["Straight_Poses_Town01"])
-        #     random_position_task = scenario_config["Straight_Poses_Town01"][np.random.randint(straight_poses_tasks_len)]
-        #     self.scenario["start_pos_id"] = random_position_task[0]
-        #     self.scenario["end_pos_id"] = random_position_task[1]
-        # else:
-        #     pass
+        if self.config["use_random_position_points"]:
+             one_turn_poses_tasks_len = len(scenario_config["One_Turn_Poses_Town01"])
+             random_position_task = scenario_config["One_Turn_Poses_Town01"][np.random.randint(one_turn_poses_tasks_len)]
+             self.scenario["start_pos_id"] = random_position_task[0]
+             self.scenario["end_pos_id"] = random_position_task[1]
+        else:
+             pass
 
         self.start_pos = positions[self.scenario["start_pos_id"]]
         self.end_pos = positions[self.scenario["end_pos_id"]]
@@ -588,7 +588,7 @@ class CarlaEnv(gym.Env):
             py_measurements["is_complete"] = False
 
         done = ( py_measurements["game_timestamp"] > self.scenario["episode_max_time"] or
-            py_measurements["next_command"] == "REACH_GOAL" or
+              py_measurements["next_command"] == "REACH_GOAL" or
             # py_measurements["intersection_offroad"] > MAX_OFFROAD_DEGREE or
             # is_rush_wrong_way  or
             (self.config["early_terminate_on_collision"] and check_collision(py_measurements)))

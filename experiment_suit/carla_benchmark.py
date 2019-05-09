@@ -48,6 +48,12 @@ def benchmark_summary(env, action_fn, num_test_episodes,logger):
         max_action = 1
 
     steps = 0
+    weather = None
+    num_vehicles = None
+    num_pedestrains = None
+    start_point = None
+    end_point = None
+
     for episode in range(num_test_episodes):
         while True:
             action = action_fn(obs)[0]
@@ -69,6 +75,9 @@ def benchmark_summary(env, action_fn, num_test_episodes,logger):
                 init_distance = info["init_distance"]
                 final_distance = info["distance_to_goal"]
                 duration = info["game_timestamp"]  # in milliseconds
+                weather = info["weather"]
+                num_vehicles = info["num_vehicles"]
+                num_pedestrains = info["num_pedestrians"]
 
                 collision_vehicles = info["collision_vehicles"] if info["collision_vehicles"] > \
                                                                 METRICS_PARAMETERS["collision_vehicles"]["threshold"] \
@@ -129,4 +138,4 @@ def benchmark_summary(env, action_fn, num_test_episodes,logger):
         'collision_vehicles':average_episode_collvehicle,
         'collision_other':average_episode_collother
     }
-    return metrics
+    return metrics,start_point, end_point,weather, num_vehicles, num_pedestrains

@@ -71,10 +71,11 @@ def main(argvs):
             logger.log("Running DDPG trained model")
             from experiment_suit.carla_benchmark import benchmark_summary
             TEST_EPISODES = 10
-            metrics = benchmark_summary(env, action_fn=action_fn, num_test_episodes=TEST_EPISODES, logger=logger)
+            metrics, start_point, end_point,weather_id, num_vehicles, num_pedestrains = benchmark_summary(env, action_fn=action_fn, num_test_episodes=TEST_EPISODES, logger=logger)
             import json
             metrics_json = json.dumps(metrics, indent=4)
-            with open('test_ddpg_benchmark.json', 'w') as f:
+            file_name = 'test_ddpg_benchmark_{}_{}_w{}_v{}_p{}.json'.format(start_point, end_point,weather_id, num_vehicles, num_pedestrains)
+            with open(file_name, 'w') as f:
                 f.write(metrics_json)
 
             # obs = env.reset()
