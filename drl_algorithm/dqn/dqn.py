@@ -28,6 +28,7 @@
         2019-04-28:    1.0.0   增加q_value来查看每个动作的q值,方便调试;
 				不使用最后一层dropout层,调试算法到底为什么不收敛;
     
+	2019-05-03:    1.0.1   测试环境中DQNAgent完全不work, 怀疑过拟合, 输出层之前加一个0.75的dropout测试;
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
 *********************************************************************************************************
@@ -78,8 +79,8 @@ def q_function(inpt, num_actions, scope, reuse=False):
         out = layers.fully_connected(reshape, num_outputs=512, activation_fn=None)
 #        out = batch_norm(out, train=batch_train, name="fc0_bn")
         out = tf.nn.relu(out)
-#        out = tf.nn.dropout(out, keep_prob=0.25)
-        out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
+#        out = tf.nn.dropout(out, keep_prob=0.75)
+        out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None,scope="output")
         return out
 
 def dqn(env,

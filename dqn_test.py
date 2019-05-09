@@ -30,7 +30,7 @@
     2019-04-24：  1.0.0       REPLAY_BUFFER_SIZE=1E5, 2E5会导致内存不够;
                               FINAL_EPSILON = 0.01, EVALUTE_EPSILON = 0.001; EXPLORATION_STEPS = 1E5;
                               UPDATE_TARGET_FREQUENCY = 3e3;
-
+    2019-04-28:   1.0.0       UPDATE_TARGET_FREQUENCY = 1e4;
 
 *	Copyright (C), 2015-2019, 阿波罗科技 www.apollorobot.cn
 *
@@ -87,7 +87,7 @@ def main(arg):
     EVALUATE_EPSILON = 0.001
     SAMPLE_BATCH_SIZE = 64
     STEPS_START_TRAIN = 1000
-    UPDATE_TARGET_FREQUENCY = 1000
+    UPDATE_TARGET_FREQUENCY = 10000
     CHECK_POINT_FREQUENCY = 20
     DQN_SCOPE = "deepq"
 
@@ -121,10 +121,11 @@ def main(arg):
             from functools import partial
             action_fn = partial(actor_fn, update_eps=EVALUATE_EPSILON)
             TEST_EPISODES = 10
-            metrics = benchmark_summary(env, action_fn=action_fn, num_test_episodes=TEST_EPISODES, logger=logger)
+            metrics, start_point, end_point,weather_id, num_vehicles, num_pedestrains = benchmark_summary(env, action_fn=action_fn, num_test_episodes=TEST_EPISODES, logger=logger)
             import json
             metrics_json = json.dumps(metrics, indent=4)
-            with open('test_dqn_benchmark.json', 'w') as f:
+            file_name = 'test_dqn_benchmark_{}_{}_w{}_v{}_p{}.json'.format(start_point, end_point,weather_id, num_vehicles, num_pedestrains)
+            with open(file_name, 'w') as f:
                 f.write(metrics_json)
 
         return actor_fn

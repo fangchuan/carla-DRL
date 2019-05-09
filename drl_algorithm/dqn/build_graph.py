@@ -263,7 +263,8 @@ def build_train(make_obs_ph,
                 scope="deepq", 
                 reuse=None, 
                 param_noise=False, 
-                param_noise_filter_func=None):
+                param_noise_filter_func=None,
+		l2_regular=0.01):
     """Creates the train function:
 
     Parameters
@@ -363,6 +364,14 @@ def build_train(make_obs_ph,
         td_error = q_t_selected - tf.stop_gradient(q_t_selected_target)
         errors = U.huber_loss(td_error)
         weighted_error = tf.reduce_mean(importance_weights_ph * errors)
+
+        regular_vars = [var for var in q_func_vars if
+                        var.name.endswith('/weights:0') and 'output' not in var.name]
+        q_regularization = tf.contrib.layers.apply_regularization(
+            regularizer=tf.contrib.layers.l2_regularizer(l2_regular),
+            weights_list=regular_vars
+        )
+        weighted_error += q_regularization
 
         # compute optimization op (potentially with gradient clipping)
         # update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
