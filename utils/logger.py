@@ -483,5 +483,44 @@ def read_tb(path):
 # configure the default logger on import
 _configure_default_logger()
 
+
+def create_gif(images, fps=10, name="Gif"):
+    global experiment_path
+
+    output_file = '{}_{}.gif'.format(datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S'), name)
+    output_dir = os.path.join(experiment_path, 'gifs')
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    output_path = os.path.join(output_dir, output_file)
+    pil_images = [Image.fromarray(image) for image in images]
+    pil_images[0].save(output_path, save_all=True, append_images=pil_images[1:], duration=1.0 / fps, loop=0)
+
+
+def create_mp4(images, fps=10, name="mp4"):
+    global experiment_path
+
+    output_file = '{}_{}.mp4'.format(datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S'), name)
+    output_dir = os.path.join(experiment_path, 'videos')
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    output_path = os.path.join(output_dir, output_file)
+    shape = 'x'.join([str(d) for d in images[0].shape[:2][::-1]])
+    command = ['ffmpeg',
+               '-y',
+               '-f', 'rawvideo',
+               '-s', shape,
+               '-pix_fmt', 'rgb24',
+               '-r', str(fps),
+               '-i', '-',
+               '-vcodec', 'libx264',
+               '-pix_fmt', 'yuv420p',
+               output_path]
+
+    p = Popen(command, stdin=PIPE, stderr=PIPE)
+    for image in images:
+        p.stdin.write(image.tostring())
+    p.stdin.close()
+    p.wait()
+    
 if __name__ == "__main__":
     _demo()

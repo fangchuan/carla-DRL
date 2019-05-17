@@ -588,7 +588,7 @@ class CarlaEnv(gym.Env):
             py_measurements["is_complete"] = False
 
         done = ( py_measurements["game_timestamp"] > self.scenario["episode_max_time"] or
-              py_measurements["next_command"] == "REACH_GOAL" or
+            #   py_measurements["next_command"] == "REACH_GOAL" or
             # py_measurements["intersection_offroad"] > MAX_OFFROAD_DEGREE or
             # is_rush_wrong_way  or
             (self.config["early_terminate_on_collision"] and check_collision(py_measurements)))
